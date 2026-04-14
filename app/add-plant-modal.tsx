@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   ScrollView,
@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Picker } from '@react-native-picker/picker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -32,7 +32,8 @@ const GENDERS = [
 
 export default function AddPlantModal() {
   const router = useRouter();
-  const { addPlant } = usePlants();
+  const params = useLocalSearchParams();
+  const { addPlant, updatePlant, plants } = usePlants();
 
   const [photoUri, setPhotoUri] = useState<string | undefined>();
   const [name, setName] = useState('');
@@ -41,6 +42,23 @@ export default function AddPlantModal() {
   const [checkInterval, setCheckInterval] = useState('1 week');
   const [gender, setGender] = useState('Unknown');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const isEditing = !!params.editId;
+  const editId = params.editId as string;
+
+  useEffect(() => {
+    if (isEditing && editId) {
+      const plant = plants.find(p => p.id === editId);
+      if (plant) {
+        setPhotoUri(plant.photoUri);
+        setName(plant.name);
+        setLocation(plant.location);
+        setBirthday(plant.birthday);
+        setCheckInterval(plant.checkInterval);
+        setGender(plant.gender);
+      }
+    }
+  }, [isEditing, editId, plants]);
 
   const pickImage = async () => {
     try {
@@ -102,18 +120,29 @@ export default function AddPlantModal() {
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-      await addPlant({
-        name: name.trim(),
-        location: location.trim(),
-        photoUri,
-        birthday,
-        checkInterval,
-        gender: gender as 'Male' | 'Female' | 'Unknown',
-      });
+      if (isEditing) {
+        await updatePlant(editId, {
+          name: name.trim(),
+          location: location.trim(),
+          photoUri,
+          birthday,
+          checkInterval,
+          gender: gender as 'Male' | 'Female' | 'Unknown',
+        });
+      } else {
+        await addPlant({
+          name: name.trim(),
+          location: location.trim(),
+          photoUri,
+          birthday,
+          checkInterval,
+          gender: gender as 'Male' | 'Female' | 'Unknown',
+        });
+      }
 
       router.dismiss();
     } catch (error) {
-      Alert.alert('Error', 'Failed to add plant');
+      Alert.alert('Error', isEditing ? 'Failed to update plant' : 'Failed to add plant');
       console.error(error);
     } finally {
       setIsSubmitting(false);
@@ -253,7 +282,9 @@ export default function AddPlantModal() {
           {isSubmitting ? (
             <ActivityIndicator color="#FFF" />
           ) : (
-            <ThemedText style={styles.submitButtonText}>Add Plant</ThemedText>
+            <ThemedText style={styles.submitButtonText}>
+              {isEditing ? 'Save Plant' : 'Add Plant'}
+            </ThemedText>
           )}
         </TouchableOpacity>
       </View>

@@ -36,6 +36,11 @@ export default function RootLayout() {
             //   </TouchableOpacity>
             // ),
           }} />
+          <Stack.Screen name="welcome-modal" options={{ 
+            presentation: 'modal', 
+            gestureEnabled: false,
+            headerShown: false,
+          }} />
         </Stack>
         <StatusBar style="auto" />
       </PlantsProvider>

@@ -15,33 +15,48 @@ export type Plant = {
 type PlantsContextType = {
   plants: Plant[];
   addPlant: (plant: Omit<Plant, 'id' | 'percent'>) => Promise<void>;
+  updatePlant: (id: string, plantData: Omit<Plant, 'id' | 'percent'>) => Promise<void>;
   removePlant: (id: string) => Promise<void>;
   isLoading: boolean;
+  userName: string | null;
+  setUserName: (name: string) => Promise<void>;
+  hasCompletedOnboarding: boolean;
+  resetUserData: () => Promise<void>;
 };
 
 const PlantsContext = createContext<PlantsContextType | undefined>(undefined);
 
 const PLANTS_KEY = 'plants_data';
+const USER_NAME_KEY = 'user_name';
+const ONBOARDING_KEY = 'onboarding_completed';
 
 export function PlantsProvider({ children }: { children: ReactNode }) {
   const [plants, setPlants] = useState<Plant[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [userName, setUserNameState] = useState<string | null>(null);
+  const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
 
-  // Load plants on mount
+  // Load plants and user data on mount
   useEffect(() => {
     loadPlants();
+    loadUserData();
   }, []);
 
   const loadPlants = async () => {
     try {
       const stored = await SecureStore.getItemAsync(PLANTS_KEY);
       if (stored) {
-        setPlants(JSON.parse(stored));
+        const parsedPlants = JSON.parse(stored);
+        // Sort by newest first (assuming ID is timestamp-based)
+        const sortedPlants = parsedPlants.sort((a: Plant, b: Plant) => 
+          parseInt(b.id) - parseInt(a.id)
+        );
+        setPlants(sortedPlants);
       } else {
         // Initialize with mock data if no stored data
         const mockPlants: Plant[] = [
           {
-            id: '1',
+            id: Date.now().toString(),
             name: 'Peace Lily',
             percent: 30,
             location: 'Living Room',
@@ -50,7 +65,7 @@ export function PlantsProvider({ children }: { children: ReactNode }) {
             gender: 'Female',
           },
           {
-            id: '2',
+            id: (Date.now() + 1).toString(),
             name: 'Snake Plant',
             percent: 65,
             location: 'Bedroom',
@@ -59,7 +74,7 @@ export function PlantsProvider({ children }: { children: ReactNode }) {
             gender: 'Male',
           },
           {
-            id: '3',
+            id: (Date.now() + 2).toString(),
             name: 'Succulent',
             percent: 80,
             location: 'Window Sill',
@@ -73,6 +88,22 @@ export function PlantsProvider({ children }: { children: ReactNode }) {
       }
     } catch (error) {
       console.error('Error loading plants:', error);
+    }
+  };
+
+  const loadUserData = async () => {
+    try {
+      const storedName = await SecureStore.getItemAsync(USER_NAME_KEY);
+      const storedOnboarding = await SecureStore.getItemAsync(ONBOARDING_KEY);
+      
+      if (storedName) {
+        setUserNameState(storedName);
+      }
+      if (storedOnboarding === 'true') {
+        setHasCompletedOnboarding(true);
+      }
+    } catch (error) {
+      console.error('Error loading user data:', error);
     } finally {
       setIsLoading(false);
     }
@@ -106,11 +137,53 @@ export function PlantsProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const updatePlant = async (id: string, plantData: Omit<Plant, 'id' | 'percent'>) => {
+    try {
+      const updatedPlants = plants.map((p) =>
+        p.id === id ? { ...p, ...plantData } : p
+      );
+      setPlants(updatedPlants);
+      await SecureStore.setItemAsync(PLANTS_KEY, JSON.stringify(updatedPlants));
+    } catch (error) {
+      console.error('Error updating plant:', error);
+      throw error;
+    }
+  };
+
+  const setUserName = async (name: string) => {
+    try {
+      setUserNameState(name);
+      setHasCompletedOnboarding(true);
+      await SecureStore.setItemAsync(USER_NAME_KEY, name);
+      await SecureStore.setItemAsync(ONBOARDING_KEY, 'true');
+    } catch (error) {
+      console.error('Error saving user name:', error);
+      throw error;
+    }
+  };
+
+  const resetUserData = async () => {
+    try {
+      setUserNameState(null);
+      setHasCompletedOnboarding(false);
+      await SecureStore.deleteItemAsync(USER_NAME_KEY);
+      await SecureStore.deleteItemAsync(ONBOARDING_KEY);
+    } catch (error) {
+      console.error('Error resetting user data:', error);
+      throw error;
+    }
+  };
+
   const value: PlantsContextType = {
     plants,
     addPlant,
+    updatePlant,
     removePlant,
     isLoading,
+    userName,
+    setUserName,
+    hasCompletedOnboarding,
+    resetUserData,
   };
 
   return <PlantsContext.Provider value={value}>{children}</PlantsContext.Provider>;
