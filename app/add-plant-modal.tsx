@@ -8,6 +8,9 @@ import {
   Image,
   Alert,
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  useWindowDimensions,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
@@ -16,12 +19,12 @@ import { Picker } from '@react-native-picker/picker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { usePlants } from '@/app/context/PlantContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const CHECK_INTERVALS = [
-  { label: 'Every 3 days', value: '3 days' },
-  { label: 'Every week', value: '1 week' },
-  { label: 'Every 2 weeks', value: '2 weeks' },
-  { label: 'Monthly', value: '1 month' },
+  { label: 'Every month', value: '1 month' },
+  { label: 'Every 2 months', value: '2 months' },
+  { label: 'Every 3 months', value: '3 months' },
 ];
 
 const GENDERS = [
@@ -30,10 +33,24 @@ const GENDERS = [
   { label: 'Unknown', value: 'Unknown' },
 ];
 
+const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function parseIntervalDaysLocal(interval: string): number {
+  const parts = interval.split(' ');
+  const num = parseInt(parts[0], 10);
+  const unit = parts[1];
+  if (unit.startsWith('day')) return num;
+  if (unit.startsWith('week')) return num * 7;
+  if (unit.startsWith('month')) return num * 30;
+  return 7;
+}
+
 export default function AddPlantModal() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { addPlant, updatePlant, plants } = usePlants();
+  const insets = useSafeAreaInsets();
+  const { height: screenH } = useWindowDimensions();
 
   const [photoUri, setPhotoUri] = useState<string | undefined>();
   const [name, setName] = useState('');
@@ -41,6 +58,9 @@ export default function AddPlantModal() {
   const [birthday, setBirthday] = useState(new Date().toISOString().split('T')[0]);
   const [checkInterval, setCheckInterval] = useState('1 week');
   const [gender, setGender] = useState('Unknown');
+  const [waterDay, setWaterDay] = useState<number | undefined>(undefined);
+  const [reminderHour, setReminderHour] = useState(9);
+  const [reminderMinute, setReminderMinute] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const isEditing = !!params.editId;
@@ -56,6 +76,12 @@ export default function AddPlantModal() {
         setBirthday(plant.birthday);
         setCheckInterval(plant.checkInterval);
         setGender(plant.gender);
+        if (plant.waterDay !== undefined) setWaterDay(plant.waterDay);
+        if (plant.reminderTime) {
+          const [h, m] = plant.reminderTime.split(':').map(Number);
+          setReminderHour(h);
+          setReminderMinute(m);
+        }
       }
     }
   }, [isEditing, editId, plants]);
@@ -128,6 +154,8 @@ export default function AddPlantModal() {
           birthday,
           checkInterval,
           gender: gender as 'Male' | 'Female' | 'Unknown',
+          waterDay,
+          reminderTime: `${String(reminderHour).padStart(2, '0')}:${String(reminderMinute).padStart(2, '0')}`,
         });
       } else {
         await addPlant({
@@ -137,6 +165,8 @@ export default function AddPlantModal() {
           birthday,
           checkInterval,
           gender: gender as 'Male' | 'Female' | 'Unknown',
+          waterDay,
+          reminderTime: `${String(reminderHour).padStart(2, '0')}:${String(reminderMinute).padStart(2, '0')}`,
         });
       }
 
@@ -155,9 +185,14 @@ export default function AddPlantModal() {
 
   return (
     <ThemedView style={styles.container}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+      >
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { maxWidth: 600, alignSelf: 'center', width: '100%' }]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         bounces={true}
@@ -230,7 +265,7 @@ export default function AddPlantModal() {
 
           {/* Check Interval Dropdown */}
           <View style={styles.fieldGroup}>
-            <ThemedText style={styles.label}>Check Reservoir/Soil</ThemedText>
+            <ThemedText style={styles.label}>Watering Reminder Interval</ThemedText>
             <View style={styles.pickerContainer}>
               <Picker
                 selectedValue={checkInterval}
@@ -261,11 +296,81 @@ export default function AddPlantModal() {
               </Picker>
             </View>
           </View>
+
+          {/* Preferred Watering Day — only shown for intervals >= 7 days */}
+          {parseIntervalDaysLocal(checkInterval) >= 7 && (
+            <View style={styles.fieldGroup}>
+              <ThemedText style={styles.label}>Preferred Watering Day</ThemedText>
+              <ThemedText style={styles.sublabel}>Which day of the week should this plant be watered?</ThemedText>
+              <View style={styles.dayChipRow}>
+                {DAY_LABELS.map((label, idx) => (
+                  <TouchableOpacity
+                    key={idx}
+                    style={[
+                      styles.dayChip,
+                      waterDay === idx && styles.dayChipActive,
+                    ]}
+                    onPress={() => setWaterDay(waterDay === idx ? undefined : idx)}
+                    disabled={isSubmitting}
+                  >
+                    <ThemedText style={[
+                      styles.dayChipText,
+                      waterDay === idx && styles.dayChipTextActive,
+                    ]}>{label}</ThemedText>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* Reminder Time */}
+          <View style={styles.fieldGroup}>
+            <ThemedText style={styles.label}>Reminder Time</ThemedText>
+            <ThemedText style={styles.sublabel}>What time should you be reminded to water?</ThemedText>
+            <View style={styles.timePickerRow}>
+              <View style={styles.timePickerCol}>
+                <ThemedText style={styles.timePickerLabel}>Hour</ThemedText>
+                <View style={styles.timePickerContainer}>
+                  <Picker
+                    selectedValue={reminderHour}
+                    onValueChange={setReminderHour}
+                    enabled={!isSubmitting}
+                    style={styles.picker}
+                  >
+                    {Array.from({ length: 24 }, (_, i) => (
+                      <Picker.Item
+                        key={i}
+                        label={i === 0 ? '12 AM' : i < 12 ? `${i} AM` : i === 12 ? '12 PM' : `${i - 12} PM`}
+                        value={i}
+                      />
+                    ))}
+                  </Picker>
+                </View>
+              </View>
+              <View style={styles.timePickerCol}>
+                <ThemedText style={styles.timePickerLabel}>Minute</ThemedText>
+                <View style={styles.timePickerContainer}>
+                  <Picker
+                    selectedValue={reminderMinute}
+                    onValueChange={setReminderMinute}
+                    enabled={!isSubmitting}
+                    style={styles.picker}
+                  >
+                    {[0, 15, 30, 45].map((m) => (
+                      <Picker.Item key={m} label={String(m).padStart(2, '0')} value={m} />
+                    ))}
+                  </Picker>
+                </View>
+              </View>
+            </View>
+          </View>
         </View>
       </ScrollView>
+      </KeyboardAvoidingView>
 
       {/* Bottom Action Buttons */}
-      <View style={styles.actionBar}>
+      <View style={[styles.actionBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+        <View style={{ flexDirection: 'row', gap: 12, maxWidth: 600, alignSelf: 'center', width: '100%' }}>
         <TouchableOpacity
           style={[styles.button, styles.cancelButton]}
           onPress={handleCancel}
@@ -287,6 +392,7 @@ export default function AddPlantModal() {
             </ThemedText>
           )}
         </TouchableOpacity>
+        </View>
       </View>
     </ThemedView>
   );
@@ -303,7 +409,7 @@ const styles = StyleSheet.create({
   },
 
   scrollContent: {
-    paddingBottom: 100,
+    paddingBottom: 20,
   },
 
   header: {
@@ -326,7 +432,8 @@ const styles = StyleSheet.create({
 
   photoPreview: {
     width: '100%',
-    height: 280,
+    aspectRatio: 4 / 3,
+    maxHeight: 280,
     borderRadius: 16,
     marginBottom: 12,
     backgroundColor: '#444',
@@ -334,7 +441,8 @@ const styles = StyleSheet.create({
 
   photoPlaceholder: {
     width: '100%',
-    height: 280,
+    aspectRatio: 4 / 3,
+    maxHeight: 280,
     borderRadius: 16,
     backgroundColor: '#444',
     justifyContent: 'center',
@@ -409,7 +517,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.2)',
     overflow: 'hidden',
     justifyContent: 'center',
-    height: 100,
+    height: 90,
   },
 
   picker: {
@@ -417,18 +525,11 @@ const styles = StyleSheet.create({
   },
 
   actionBar: {
-    position: 'absolute',
-    bottom: 35,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    gap: 12,
+    paddingTop: 12,
     backgroundColor: '#535353',
     borderTopWidth: 1,
     borderTopColor: 'rgba(255, 255, 255, 0.1)',
-    height: 80,
   },
 
   button: {
@@ -459,6 +560,68 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontWeight: '600',
     fontSize: 16,
+  },
+
+  sublabel: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.5)',
+    marginBottom: 10,
+  },
+
+  dayChipRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+
+  dayChip: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    alignItems: 'center',
+  },
+
+  dayChipActive: {
+    backgroundColor: '#00C853',
+    borderColor: '#00C853',
+  },
+
+  dayChipText: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+
+  dayChipTextActive: {
+    color: '#FFF',
+  },
+
+  timePickerRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+
+  timePickerCol: {
+    flex: 1,
+  },
+
+  timePickerLabel: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.5)',
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+
+  timePickerContainer: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    overflow: 'hidden',
+    justifyContent: 'center',
+    height: 100,
   },
 
 });
