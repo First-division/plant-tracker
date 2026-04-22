@@ -490,6 +490,15 @@ export function PlantsProvider({ children }: { children: ReactNode }) {
       }
       // Save current plants to SecureStore so they persist locally
       await SecureStore.setItemAsync(PLANTS_KEY, JSON.stringify(plants));
+
+      if (!householdId) {
+        setHouseholdCodeState(null);
+        setHouseholdNameState(null);
+        setHouseholdMembers([]);
+        setHouseholdNotifications([]);
+        await SecureStore.deleteItemAsync(HOUSEHOLD_CODE_KEY);
+        await SecureStore.deleteItemAsync(HOUSEHOLD_NAME_KEY);
+      }
     }
   };
 

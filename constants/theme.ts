@@ -29,7 +29,7 @@ export const Colors = {
 
 // --- Color Theme Presets ---
 
-export type ColorThemeName = 'default' | 'forest' | 'ocean' | 'sunset' | 'lavender' | 'rose';
+export type ColorThemeName = 'default' | 'forest' | 'ocean' | 'sunset' | 'lavender' | 'rose' | 'pink';
 
 export type ColorTheme = {
   name: ColorThemeName;
@@ -39,6 +39,8 @@ export type ColorTheme = {
   accent: string;        // secondary accent (green action color)
   cardBg: string;        // dark-mode card/container background
   screenBg: string;      // main screen background
+  lightCardBg: string;   // light-mode card/container background
+  lightScreenBg: string; // light-mode screen background
 };
 
 export const COLOR_THEMES: Record<ColorThemeName, ColorTheme> = {
@@ -50,6 +52,8 @@ export const COLOR_THEMES: Record<ColorThemeName, ColorTheme> = {
     accent: '#00C853',
     cardBg: '#1C1C1E',
     screenBg: '#000000',
+    lightCardBg: '#FFFFFF',
+    lightScreenBg: '#EEF5FF',
   },
   forest: {
     name: 'forest',
@@ -59,6 +63,8 @@ export const COLOR_THEMES: Record<ColorThemeName, ColorTheme> = {
     accent: '#30D158',
     cardBg: '#1A2A1A',
     screenBg: '#0F1A0F',
+    lightCardBg: '#F8FFF8',
+    lightScreenBg: '#ECF8EE',
   },
   ocean: {
     name: 'ocean',
@@ -68,6 +74,8 @@ export const COLOR_THEMES: Record<ColorThemeName, ColorTheme> = {
     accent: '#64D2FF',
     cardBg: '#122535',
     screenBg: '#0A1A28',
+    lightCardBg: '#F6FCFF',
+    lightScreenBg: '#EAF6FF',
   },
   sunset: {
     name: 'sunset',
@@ -77,6 +85,8 @@ export const COLOR_THEMES: Record<ColorThemeName, ColorTheme> = {
     accent: '#FF6B35',
     cardBg: '#2A1E18',
     screenBg: '#1A1210',
+    lightCardBg: '#FFF9F2',
+    lightScreenBg: '#FFF1E5',
   },
   lavender: {
     name: 'lavender',
@@ -86,6 +96,8 @@ export const COLOR_THEMES: Record<ColorThemeName, ColorTheme> = {
     accent: '#BF5AF2',
     cardBg: '#241A32',
     screenBg: '#16101F',
+    lightCardBg: '#FCF8FF',
+    lightScreenBg: '#F4EDFF',
   },
   rose: {
     name: 'rose',
@@ -95,6 +107,19 @@ export const COLOR_THEMES: Record<ColorThemeName, ColorTheme> = {
     accent: '#FF375F',
     cardBg: '#2A1A20',
     screenBg: '#1A1015',
+    lightCardBg: '#FFF7F9',
+    lightScreenBg: '#FFECEF',
+  },
+  pink: {
+    name: 'pink',
+    label: 'Pink',
+    primary: '#FF5FA2',
+    primaryLight: 'rgba(255,95,162,0.16)',
+    accent: '#FF88BC',
+    cardBg: '#2D1823',
+    screenBg: '#1B0F16',
+    lightCardBg: '#FFF7FB',
+    lightScreenBg: '#FFEFF7',
   },
 };
 
@@ -112,9 +137,9 @@ export function getThemeColors(themeName: ColorThemeName, isDark: boolean): Colo
     ...theme,
     text: '#000000',
     secondaryText: '#6C6C70',
-    background: '#F2F2F7',
-    cardBg: '#FFFFFF',
-    screenBg: '#F2F2F7',
+    background: theme.lightScreenBg,
+    cardBg: theme.lightCardBg,
+    screenBg: theme.lightScreenBg,
   };
 }
 

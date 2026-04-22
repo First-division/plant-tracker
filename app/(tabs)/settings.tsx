@@ -14,6 +14,7 @@ import {
   Clipboard,
   PanResponder,
   LayoutChangeEvent,
+  Platform,
 } from 'react-native';
 import { usePlants, AppAppearance } from '@/app/context/PlantContext';
 import { useAuth } from '@/app/context/AuthContext';
@@ -22,7 +23,7 @@ import { router } from 'expo-router';
 import { useNavigation } from '@react-navigation/native';
 import { COLOR_THEMES, ColorThemeName, MEMBER_COLORS, getThemeColors } from '@/constants/theme';
 import { LinearGradient } from 'expo-linear-gradient';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // ---- Simple HSV Color Picker (no external deps) ----
 function hsvToHex(h: number, s: number, v: number): string {
@@ -296,9 +297,9 @@ export default function SettingsScreen() {
   useEffect(() => {
     if (isAuthenticated && pendingHouseholdEnableRef.current) {
       pendingHouseholdEnableRef.current = false;
-      setHouseholdEnabled(true);
+      void setHouseholdEnabled(true);
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, setHouseholdEnabled]);
 
   const systemScheme = useColorScheme();
   const effectiveScheme = appearance === 'system' ? systemScheme : appearance;
@@ -324,6 +325,8 @@ export default function SettingsScreen() {
   const [colorPickerTab, setColorPickerTab] = useState<'presets' | 'custom'>('presets');
   const [customPickerColor, setCustomPickerColor] = useState(householdMemberColor);
   const [membersModalVisible, setMembersModalVisible] = useState(false);
+  const settingsModalPresentationStyle = Platform.OS === 'ios' ? 'formSheet' : 'fullScreen';
+  const androidModalTopInset = Platform.OS === 'android' ? insets.top : 0;
 
   // Cross-platform prompt modal (replaces iOS-only Alert.prompt)
   const [promptConfig, setPromptConfig] = useState<{
@@ -577,8 +580,22 @@ export default function SettingsScreen() {
                       );
                       return;
                     }
-                    if (val && !isAuthenticated) {
+                    if (val) {
                       pendingHouseholdEnableRef.current = true;
+
+                      if (isAuthenticated) {
+                        void (async () => {
+                          try {
+                            await signOut();
+                            router.push('/auth-modal');
+                          } catch (e: any) {
+                            pendingHouseholdEnableRef.current = false;
+                            Alert.alert('Error', e.message || 'Failed to reset household sign-in.');
+                          }
+                        })();
+                        return;
+                      }
+
                       router.push('/auth-modal');
                       return;
                     }
@@ -596,7 +613,7 @@ export default function SettingsScreen() {
                               try {
                                 await leaveCurrentHousehold(user.uid);
                                 await signOut();
-                                setHouseholdEnabled(false);
+                                await setHouseholdEnabled(false);
                               } catch (e: any) {
                                 Alert.alert('Error', e.message);
                               }
@@ -606,7 +623,18 @@ export default function SettingsScreen() {
                       );
                       return;
                     }
-                    setHouseholdEnabled(val);
+
+                    pendingHouseholdEnableRef.current = false;
+                    void (async () => {
+                      try {
+                        await setHouseholdEnabled(false);
+                        if (isAuthenticated) {
+                          await signOut();
+                        }
+                      } catch (e: any) {
+                        Alert.alert('Error', e.message || 'Failed to turn off household sharing.');
+                      }
+                    })();
                   }}
                   trackColor={{ false: '#767577', true: '#34C759' }}
                 />
@@ -761,8 +789,8 @@ export default function SettingsScreen() {
       <View style={{ height: 40 }} />
 
       {/* TIMEZONE MODAL */}
-      <Modal visible={tzModalVisible} animationType="slide" presentationStyle="formSheet">
-        <View style={[styles.modalContainer, { backgroundColor: colors.bg }]}>
+      <Modal visible={tzModalVisible} animationType="slide" presentationStyle={settingsModalPresentationStyle} statusBarTranslucent={Platform.OS === 'android'}>
+        <View style={[styles.modalContainer, { backgroundColor: colors.bg, paddingTop: androidModalTopInset }]}>
           <View style={[styles.modalHeader, { backgroundColor: colors.card }]}>
             <TouchableOpacity onPress={() => { setTzModalVisible(false); setTzSearch(''); }}>
               <Text style={[styles.modalCancel, { color: colors.tint }]}>Cancel</Text>
@@ -805,8 +833,8 @@ export default function SettingsScreen() {
       </Modal>
 
       {/* INTERVAL PICKER MODAL */}
-      <Modal visible={intervalModalVisible} animationType="slide" presentationStyle="formSheet">
-        <View style={[styles.modalContainer, { backgroundColor: colors.bg }]}>
+      <Modal visible={intervalModalVisible} animationType="slide" presentationStyle={settingsModalPresentationStyle} statusBarTranslucent={Platform.OS === 'android'}>
+        <View style={[styles.modalContainer, { backgroundColor: colors.bg, paddingTop: androidModalTopInset }]}>
           <View style={[styles.modalHeader, { backgroundColor: colors.card }]}>
             <TouchableOpacity onPress={() => setIntervalModalVisible(false)}>
               <Text style={[styles.modalCancel, { color: colors.tint }]}>Cancel</Text>
@@ -837,8 +865,8 @@ export default function SettingsScreen() {
       </Modal>
 
       {/* COLOR THEME MODAL */}
-      <Modal visible={themeModalVisible} animationType="slide" presentationStyle="formSheet">
-        <View style={[styles.modalContainer, { backgroundColor: colors.bg }]}>
+      <Modal visible={themeModalVisible} animationType="slide" presentationStyle={settingsModalPresentationStyle} statusBarTranslucent={Platform.OS === 'android'}>
+        <View style={[styles.modalContainer, { backgroundColor: colors.bg, paddingTop: androidModalTopInset }]}>
           <View style={[styles.modalHeader, { backgroundColor: colors.card }]}>
             <TouchableOpacity onPress={() => setThemeModalVisible(false)}>
               <Text style={[styles.modalCancel, { color: colors.tint }]}>Cancel</Text>
@@ -1017,8 +1045,8 @@ export default function SettingsScreen() {
       </Modal>
 
       {/* HOUSEHOLD MEMBERS MODAL */}
-      <Modal visible={membersModalVisible} animationType="slide" presentationStyle="formSheet">
-        <View style={[styles.modalContainer, { backgroundColor: colors.bg }]}>
+      <Modal visible={membersModalVisible} animationType="slide" presentationStyle={settingsModalPresentationStyle} statusBarTranslucent={Platform.OS === 'android'}>
+        <View style={[styles.modalContainer, { backgroundColor: colors.bg, paddingTop: androidModalTopInset }]}> 
           <View style={[styles.modalHeader, { backgroundColor: colors.card }]}>
             <TouchableOpacity onPress={() => setMembersModalVisible(false)}>
               <Text style={[styles.modalCancel, { color: colors.tint }]}>Cancel</Text>

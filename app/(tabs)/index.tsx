@@ -11,16 +11,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import OnboardingWalkthrough from "@/components/onboarding-walkthrough";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { getThemeColors } from "@/constants/theme";
-
-function parseIntervalDays(interval: string): number {
-  const parts = interval.split(' ');
-  const num = parseInt(parts[0], 10);
-  const unit = parts[1];
-  if (unit.startsWith('day')) return num;
-  if (unit.startsWith('week')) return num * 7;
-  if (unit.startsWith('month')) return num * 30;
-  return 7;
-}
+import { parseCheckIntervalDays } from '@/services/plant-intervals';
 
 function snapToWaterDay(date: Date, waterDay: number | undefined): Date {
   if (waterDay === undefined) return date;
@@ -116,7 +107,7 @@ export default function HomeScreen() {
     const results: { plant: typeof plants[0]; date: Date; dateLabel: string; dayOfMonth: string; monthShort: string; ownerId: string; ownerName: string; ownerColor: string }[] = [];
 
     for (const plant of plants) {
-      const intervalDays = parseIntervalDays(plant.checkInterval);
+      const intervalDays = parseCheckIntervalDays(plant.checkInterval);
       const log = plant.wateringLog || [];
       let nextWaterDate: Date;
 
@@ -196,7 +187,7 @@ export default function HomeScreen() {
   }, [filteredPlants, isHouseholdActive, currentUserId, memberFilter, householdMembers]);
 
   const isPlantOverdue = (plant: typeof plants[0]): boolean => {
-    const intervalDays = parseIntervalDays(plant.checkInterval);
+    const intervalDays = parseCheckIntervalDays(plant.checkInterval);
     const log = plant.wateringLog || [];
     const now = new Date();
     now.setHours(0, 0, 0, 0);

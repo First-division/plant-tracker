@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { usePlants, Plant } from '@/app/context/PlantContext';
+import { parseCheckIntervalDays } from '@/services/plant-intervals';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -10,16 +11,6 @@ Notifications.setNotificationHandler({
     shouldSetBadge: false,
   }),
 });
-
-function parseIntervalDays(interval: string): number {
-  const parts = interval.split(' ');
-  const num = parseInt(parts[0], 10);
-  const unit = parts[1];
-  if (unit.startsWith('day')) return num;
-  if (unit.startsWith('week')) return num * 7;
-  if (unit.startsWith('month')) return num * 30;
-  return 7;
-}
 
 // Snap a date forward to the nearest occurrence of the preferred day of the week (0=Sun..6=Sat)
 function snapToWaterDay(date: Date, waterDay: number | undefined): Date {
@@ -33,7 +24,7 @@ function snapToWaterDay(date: Date, waterDay: number | undefined): Date {
 }
 
 function getNextWaterDate(plant: Plant): Date {
-  const intervalDays = parseIntervalDays(plant.checkInterval);
+  const intervalDays = parseCheckIntervalDays(plant.checkInterval);
   const now = new Date();
   const log = plant.wateringLog || [];
   let next: Date;

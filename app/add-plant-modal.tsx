@@ -20,12 +20,13 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { usePlants } from '@/app/context/PlantContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-const CHECK_INTERVALS = [
-  { label: 'Every month', value: '1 month' },
-  { label: 'Every 2 months', value: '2 months' },
-  { label: 'Every 3 months', value: '3 months' },
-];
+import {
+  CheckIntervalParts,
+  checkIntervalPartsToDays,
+  formatCheckInterval,
+  hasCheckIntervalValue,
+  parseCheckIntervalParts,
+} from '@/services/plant-intervals';
 
 const GENDERS = [
   { label: 'Male', value: 'Male' },
@@ -35,20 +36,22 @@ const GENDERS = [
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-function parseIntervalDaysLocal(interval: string): number {
-  const parts = interval.split(' ');
-  const num = parseInt(parts[0], 10);
-  const unit = parts[1];
-  if (unit.startsWith('day')) return num;
-  if (unit.startsWith('week')) return num * 7;
-  if (unit.startsWith('month')) return num * 30;
-  return 7;
+function getIntervalInputValue(value: number): string {
+  return value > 0 ? String(value) : '';
+}
+
+function getIntervalPartsFromInput(years: string, months: string, days: string): CheckIntervalParts {
+  return {
+    years: parseInt(years || '0', 10) || 0,
+    months: parseInt(months || '0', 10) || 0,
+    days: parseInt(days || '0', 10) || 0,
+  };
 }
 
 export default function AddPlantModal() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const { addPlant, updatePlant, plants } = usePlants();
+  const { addPlant, updatePlant, plants, defaultCheckInterval } = usePlants();
   const insets = useSafeAreaInsets();
   const { height: screenH } = useWindowDimensions();
 
@@ -56,7 +59,9 @@ export default function AddPlantModal() {
   const [name, setName] = useState('');
   const [location, setLocation] = useState('');
   const [birthday, setBirthday] = useState(new Date().toISOString().split('T')[0]);
-  const [checkInterval, setCheckInterval] = useState('1 week');
+  const [intervalYears, setIntervalYears] = useState('');
+  const [intervalMonths, setIntervalMonths] = useState('');
+  const [intervalDays, setIntervalDays] = useState('');
   const [gender, setGender] = useState('Unknown');
   const [waterDay, setWaterDay] = useState<number | undefined>(undefined);
   const [reminderHour, setReminderHour] = useState(9);
@@ -66,6 +71,27 @@ export default function AddPlantModal() {
   const isEditing = !!params.editId;
   const editId = params.editId as string;
 
+  const setIntervalStateFromValue = (value: string) => {
+    const parts = parseCheckIntervalParts(value);
+    setIntervalYears(getIntervalInputValue(parts.years));
+    setIntervalMonths(getIntervalInputValue(parts.months));
+    setIntervalDays(getIntervalInputValue(parts.days));
+  };
+
+  const handleIntervalInputChange = (setter: React.Dispatch<React.SetStateAction<string>>) => (value: string) => {
+    setter(value.replace(/[^0-9]/g, ''));
+  };
+
+  const intervalParts = getIntervalPartsFromInput(intervalYears, intervalMonths, intervalDays);
+  const intervalSummary = formatCheckInterval(intervalParts);
+  const intervalTotalDays = checkIntervalPartsToDays(intervalParts);
+
+  useEffect(() => {
+    if (!isEditing) {
+      setIntervalStateFromValue(defaultCheckInterval);
+    }
+  }, [defaultCheckInterval, isEditing]);
+
   useEffect(() => {
     if (isEditing && editId) {
       const plant = plants.find(p => p.id === editId);
@@ -74,7 +100,7 @@ export default function AddPlantModal() {
         setName(plant.name);
         setLocation(plant.location);
         setBirthday(plant.birthday);
-        setCheckInterval(plant.checkInterval);
+        setIntervalStateFromValue(plant.checkInterval);
         setGender(plant.gender);
         if (plant.waterDay !== undefined) setWaterDay(plant.waterDay);
         if (plant.reminderTime) {
@@ -85,6 +111,12 @@ export default function AddPlantModal() {
       }
     }
   }, [isEditing, editId, plants]);
+
+  useEffect(() => {
+    if (intervalTotalDays < 7 && waterDay !== undefined) {
+      setWaterDay(undefined);
+    }
+  }, [intervalTotalDays, waterDay]);
 
   const pickImage = async () => {
     try {
@@ -142,6 +174,13 @@ export default function AddPlantModal() {
       return;
     }
 
+    if (!hasCheckIntervalValue(intervalParts)) {
+      Alert.alert('Validation Error', 'Please set at least one watering interval value.');
+      return;
+    }
+
+    const checkInterval = formatCheckInterval(intervalParts);
+
     setIsSubmitting(true);
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -154,7 +193,7 @@ export default function AddPlantModal() {
           birthday,
           checkInterval,
           gender: gender as 'Male' | 'Female' | 'Unknown',
-          waterDay,
+          waterDay: intervalTotalDays >= 7 ? waterDay : undefined,
           reminderTime: `${String(reminderHour).padStart(2, '0')}:${String(reminderMinute).padStart(2, '0')}`,
         });
       } else {
@@ -165,7 +204,7 @@ export default function AddPlantModal() {
           birthday,
           checkInterval,
           gender: gender as 'Male' | 'Female' | 'Unknown',
-          waterDay,
+          waterDay: intervalTotalDays >= 7 ? waterDay : undefined,
           reminderTime: `${String(reminderHour).padStart(2, '0')}:${String(reminderMinute).padStart(2, '0')}`,
         });
       }
@@ -263,21 +302,51 @@ export default function AddPlantModal() {
             />
           </View>
 
-          {/* Check Interval Dropdown */}
+          {/* Check Interval Inputs */}
           <View style={styles.fieldGroup}>
             <ThemedText style={styles.label}>Watering Reminder Interval</ThemedText>
-            <View style={styles.pickerContainer}>
-              <Picker
-                selectedValue={checkInterval}
-                onValueChange={setCheckInterval}
-                enabled={!isSubmitting}
-                style={styles.picker}
-              >
-                {CHECK_INTERVALS.map((interval) => (
-                  <Picker.Item key={interval.value} label={interval.label} value={interval.value} />
-                ))}
-              </Picker>
+            <ThemedText style={styles.sublabel}>Use any combination of years, months, and days. At least one value must be greater than 0.</ThemedText>
+            <View style={styles.intervalRow}>
+              <View style={styles.intervalCard}>
+                <TextInput
+                  style={styles.intervalInput}
+                  value={intervalYears}
+                  onChangeText={handleIntervalInputChange(setIntervalYears)}
+                  editable={!isSubmitting}
+                  keyboardType={Platform.OS === 'ios' ? 'number-pad' : 'numeric'}
+                  placeholder="0"
+                  placeholderTextColor="rgba(255, 255, 255, 0.35)"
+                />
+                <ThemedText style={styles.intervalLabel}>Years</ThemedText>
+              </View>
+              <View style={styles.intervalCard}>
+                <TextInput
+                  style={styles.intervalInput}
+                  value={intervalMonths}
+                  onChangeText={handleIntervalInputChange(setIntervalMonths)}
+                  editable={!isSubmitting}
+                  keyboardType={Platform.OS === 'ios' ? 'number-pad' : 'numeric'}
+                  placeholder="0"
+                  placeholderTextColor="rgba(255, 255, 255, 0.35)"
+                />
+                <ThemedText style={styles.intervalLabel}>Months</ThemedText>
+              </View>
+              <View style={styles.intervalCard}>
+                <TextInput
+                  style={styles.intervalInput}
+                  value={intervalDays}
+                  onChangeText={handleIntervalInputChange(setIntervalDays)}
+                  editable={!isSubmitting}
+                  keyboardType={Platform.OS === 'ios' ? 'number-pad' : 'numeric'}
+                  placeholder="0"
+                  placeholderTextColor="rgba(255, 255, 255, 0.35)"
+                />
+                <ThemedText style={styles.intervalLabel}>Days</ThemedText>
+              </View>
             </View>
+            <ThemedText style={styles.intervalPreview}>
+              {intervalSummary ? `Every ${intervalSummary}` : 'Enter an interval to schedule reminders'}
+            </ThemedText>
           </View>
 
           {/* Gender Dropdown */}
@@ -298,7 +367,7 @@ export default function AddPlantModal() {
           </View>
 
           {/* Preferred Watering Day — only shown for intervals >= 7 days */}
-          {parseIntervalDaysLocal(checkInterval) >= 7 && (
+          {intervalTotalDays >= 7 && (
             <View style={styles.fieldGroup}>
               <ThemedText style={styles.label}>Preferred Watering Day</ThemedText>
               <ThemedText style={styles.sublabel}>Which day of the week should this plant be watered?</ThemedText>
@@ -522,6 +591,44 @@ const styles = StyleSheet.create({
 
   picker: {
     color: '#FFF',
+  },
+
+  intervalRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+
+  intervalCard: {
+    flex: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+  },
+
+  intervalInput: {
+    width: '100%',
+    textAlign: 'center',
+    color: '#FFF',
+    fontSize: 24,
+    fontWeight: '700',
+    paddingVertical: 6,
+  },
+
+  intervalLabel: {
+    color: 'rgba(255, 255, 255, 0.65)',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 6,
+  },
+
+  intervalPreview: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.7)',
+    marginTop: 10,
   },
 
   actionBar: {

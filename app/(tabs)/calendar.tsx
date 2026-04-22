@@ -8,6 +8,7 @@ import { usePlants, Plant } from '@/app/context/PlantContext';
 import { useAuth } from '@/app/context/AuthContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { getThemeColors } from '@/constants/theme';
+import { parseCheckIntervalDays } from '@/services/plant-intervals';
 
 type CalendarEvent = {
   plant: Plant;
@@ -22,16 +23,6 @@ type DayEvents = {
   completed: CalendarEvent[];
   scheduled: CalendarEvent[];
 };
-
-function parseInterval(interval: string): number {
-  const parts = interval.split(' ');
-  const num = parseInt(parts[0], 10);
-  const unit = parts[1];
-  if (unit.startsWith('day')) return num;
-  if (unit.startsWith('week')) return num * 7;
-  if (unit.startsWith('month')) return num * 30;
-  return 7;
-}
 
 function snapToWaterDay(date: Date, waterDay: number | undefined): Date {
   if (waterDay === undefined) return date;
@@ -79,7 +70,7 @@ function buildDayEventsMap(plants: Plant[], year: number, month: number): Record
     }
 
     // 2. Scheduled (projected) events — only today or future, not already completed
-    const intervalDays = parseInterval(plant.checkInterval);
+    const intervalDays = parseCheckIntervalDays(plant.checkInterval);
     const anchor = log.length > 0 ? new Date(log[log.length - 1].date) : new Date(plant.birthday);
     if (isNaN(anchor.getTime())) continue;
 

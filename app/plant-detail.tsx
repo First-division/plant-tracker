@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   Image,
   Alert,
+  Platform,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -13,16 +14,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { usePlants } from '@/app/context/PlantContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-function parseIntervalDays(interval: string): number {
-  const parts = interval.split(' ');
-  const num = parseInt(parts[0], 10);
-  const unit = parts[1];
-  if (unit.startsWith('day')) return num;
-  if (unit.startsWith('week')) return num * 7;
-  if (unit.startsWith('month')) return num * 30;
-  return 7;
-}
+import { parseCheckIntervalDays } from '@/services/plant-intervals';
 
 export default function PlantDetailScreen() {
   const router = useRouter();
@@ -41,7 +33,7 @@ export default function PlantDetailScreen() {
       ? Math.floor((Date.now() - lastWatered.getTime()) / (1000 * 60 * 60 * 24))
       : null;
 
-    const intervalDays = parseIntervalDays(plant.checkInterval);
+    const intervalDays = parseCheckIntervalDays(plant.checkInterval);
     let nextWaterDate: Date;
     if (lastWatered) {
       nextWaterDate = new Date(lastWatered);
@@ -89,7 +81,7 @@ export default function PlantDetailScreen() {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         await waterPlant(plant.id);
       }
-    } catch (error) {
+    } catch {
       Alert.alert('Error', 'Failed to update watering');
     }
   };
@@ -110,7 +102,7 @@ export default function PlantDetailScreen() {
             await removePlant(plant.id);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             router.back();
-          } catch (error) {
+          } catch {
             Alert.alert('Error', 'Failed to delete plant');
           }
         },
@@ -134,13 +126,15 @@ export default function PlantDetailScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* Hero Photo */}
-        {plant.photoUri ? (
-          <Image source={{ uri: plant.photoUri }} style={styles.heroImage} />
-        ) : (
-          <View style={styles.heroPlaceholder}>
-            <ThemedText style={styles.heroEmoji}>🌱</ThemedText>
-          </View>
-        )}
+        <View style={styles.heroMediaFrame}>
+          {plant.photoUri ? (
+            <Image source={{ uri: plant.photoUri }} style={[styles.heroImage, styles.heroMedia]} />
+          ) : (
+            <View style={[styles.heroPlaceholder, styles.heroMedia, Platform.OS === 'android' && styles.heroPlaceholderAndroid]}>
+              <ThemedText style={styles.heroEmoji}>🌱</ThemedText>
+            </View>
+          )}
+        </View>
 
         {/* Plant Name & Location */}
         <View style={styles.headerSection}>
@@ -334,6 +328,16 @@ const styles = StyleSheet.create({
     maxHeight: 300,
     backgroundColor: '#444',
   },
+  heroMediaFrame: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+  },
+  heroMedia: {
+    width: undefined,
+    alignSelf: 'stretch',
+    borderRadius: 24,
+    overflow: 'hidden',
+  },
   heroPlaceholder: {
     width: '100%',
     aspectRatio: 16 / 9,
@@ -342,8 +346,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  heroPlaceholderAndroid: {
+    maxHeight: 240,
+    borderRadius: 24,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
   heroEmoji: {
-    
+    fontSize: Platform.OS === 'android' ? 72 : 84,
+    lineHeight: Platform.OS === 'android' ? 84 : 96,
+    textAlign: 'center',
   },
   headerSection: {
     paddingHorizontal: 20,
