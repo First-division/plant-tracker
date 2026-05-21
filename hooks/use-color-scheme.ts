@@ -1,5 +1,5 @@
 import { useColorScheme as useRNColorScheme } from 'react-native';
-import { usePlants } from '@/app/context/PlantContext';
+import { usePlants } from '@/contexts/PlantContext';
 
 export function useColorScheme() {
   const systemScheme = useRNColorScheme();

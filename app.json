@@ -2,7 +2,7 @@
   "expo": {
     "name": "plant-tracker",
     "slug": "plant-tracker",
-    "version": "1.0.1",
+    "version": "1.0.5",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "planttracker",
@@ -47,6 +47,14 @@
         "@react-native-google-signin/google-signin",
         {
           "iosUrlScheme": "com.googleusercontent.apps.1090326668110-1epmdqq8btgaefmutp6u6tr12pfo4s6k"
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow PlantCare to access your photos so you can choose plant pictures.",
+          "savePhotosPermission": "Allow PlantCare to save plant photos to your camera roll when you ask it to.",
+          "isAccessMediaLocationEnabled": false
         }
       ],
       "expo-secure-store"

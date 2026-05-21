@@ -17,9 +17,8 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
-import { usePlants } from '@/app/context/PlantContext';
+import { usePlants } from '@/contexts/PlantContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { getThemeColors } from '@/constants/theme';
 
 const STEPS = [
   'welcome',
@@ -33,10 +32,9 @@ type Step = typeof STEPS[number];
 export default function WelcomeModal() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { setUserName, colorTheme } = usePlants();
+  const { setUserName } = usePlants();
   const colorScheme = useColorScheme();
   const isDark = colorScheme !== 'light';
-  const theme = getThemeColors(colorTheme, isDark);
 
   const colors = {
     bg: isDark ? '#1C1C1E' : '#F2F2F7',
@@ -118,10 +116,10 @@ export default function WelcomeModal() {
             </View>
             <ThemedText style={[s.title, { fontSize: titleSize, color: colors.text }]}>Welcome to PlantCare!</ThemedText>
             <ThemedText style={[s.body, { fontSize: bodySize, color: colors.textSecondary }]}>
-              Your personal plant care companion. We'll help you track watering schedules, monitor plant health, and never forget to water your plants again.
+              Your personal plant care companion. We will help you track watering schedules, monitor plant health, and never forget to water your plants again.
             </ThemedText>
             <ThemedText style={[s.body, { fontSize: bodySize, marginTop: 12, color: colors.textSecondary }]}>
-              Let's take a quick tour of the app.
+              Let us take a quick tour of the app.
             </ThemedText>
           </>
         );
@@ -133,10 +131,10 @@ export default function WelcomeModal() {
             </View>
             <ThemedText style={[s.title, { fontSize: titleSize, color: colors.text }]}>Home Screen</ThemedText>
             <ThemedText style={[s.body, { fontSize: bodySize, color: colors.textSecondary }]}>
-              The home screen shows all your plants at a glance. You'll see each plant's health percentage, location, and when it next needs watering.
+              The home screen shows all your plants at a glance. You will see each plant health percentage, location, and when it next needs watering.
             </ThemedText>
             <ThemedText style={[s.body, { fontSize: bodySize, marginTop: 12, color: colors.textSecondary }]}>
-              Tap the <ThemedText style={s.highlight}>+</ThemedText> button to add your first plant. You can set a watering schedule and the app will remind you when it's time.
+              Tap the <ThemedText style={s.highlight}>+</ThemedText> button to add your first plant. You can set a watering schedule and the app will remind you when it is time.
             </ThemedText>
           </>
         );
@@ -167,7 +165,7 @@ export default function WelcomeModal() {
             </View>
             <ThemedText style={[s.title, { fontSize: titleSize, color: colors.text }]}>Household Sharing</ThemedText>
             <ThemedText style={[s.body, { fontSize: bodySize, color: colors.textSecondary }]}>
-              PlantCare supports sharing plants with your household. Multiple people can track and water the same plants, and everyone's activity shows up on the calendar.
+              PlantCare supports sharing plants with your household. Multiple people can track and water the same plants, and everyones activity shows up on the calendar.
             </ThemedText>
             <ThemedText style={[s.body, { fontSize: bodySize, marginTop: 12, color: colors.textSecondary }]}>
               This feature is <ThemedText style={s.highlight}>turned off by default</ThemedText>. You can enable it anytime in Settings by toggling Household Mode and signing in.
@@ -182,7 +180,7 @@ export default function WelcomeModal() {
               Enter your name so we can personalize your experience.
             </ThemedText>
             <View style={s.inputContainer}>
-              <ThemedText style={[s.label, { fontSize: bodySize, color: colors.text }]}>What's your name?</ThemedText>
+              <ThemedText style={[s.label, { fontSize: bodySize, color: colors.text }]}>What is your name?</ThemedText>
               <TextInput
                 style={[s.textInput, { fontSize: bodySize, backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.inputText }]}
                 placeholder="Enter your name"

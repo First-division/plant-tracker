@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { Alert, Platform } from 'react-native';
+import { Platform } from 'react-native';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
+import Constants from 'expo-constants';
 import {
   onAuthStateChanged,
   signInAnonymously as firebaseSignInAnonymously,
@@ -12,14 +13,23 @@ import {
   GoogleAuthProvider,
   User,
 } from 'firebase/auth';
-import { getAuth } from '@/services/firebase';
+import { getAuth, isFirebaseAvailable } from '@/services/firebase';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 
-GoogleSignin.configure({
-  iosClientId: '1090326668110-1epmdqq8btgaefmutp6u6tr12pfo4s6k.apps.googleusercontent.com',
-});
+const IOS_GOOGLE_CLIENT_ID = '1090326668110-1epmdqq8btgaefmutp6u6tr12pfo4s6k.apps.googleusercontent.com';
+const GOOGLE_WEB_CLIENT_ID =
+  (typeof process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID === 'string'
+    ? process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID.trim()
+    : '') ||
+  (typeof Constants.expoConfig?.extra?.googleWebClientId === 'string'
+    ? Constants.expoConfig.extra.googleWebClientId.trim()
+    : '');
+const GOOGLE_SIGN_IN_AVAILABLE = Platform.OS !== 'android' || GOOGLE_WEB_CLIENT_ID.length > 0;
 
-const LOCAL_USER_KEY = 'LOCAL_AUTH_USER';
+GoogleSignin.configure({
+  iosClientId: IOS_GOOGLE_CLIENT_ID,
+  ...(GOOGLE_WEB_CLIENT_ID ? { webClientId: GOOGLE_WEB_CLIENT_ID } : {}),
+});
 
 type AuthUser = {
   uid: string;
@@ -33,6 +43,7 @@ type AuthContextType = {
   isAuthenticated: boolean;
   isLoading: boolean;
   firebaseAvailable: boolean;
+  googleSignInAvailable: boolean;
   signInWithApple: () => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signInAnonymously: () => Promise<void>;
@@ -41,29 +52,15 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// --- Local-only auth helpers (Expo Go fallback) ---
-
-async function loadLocalUser(): Promise<AuthUser | null> {
-  const raw = await SecureStore.getItemAsync(LOCAL_USER_KEY);
-  return raw ? JSON.parse(raw) : null;
-}
-
-async function saveLocalUser(user: AuthUser): Promise<void> {
-  await SecureStore.setItemAsync(LOCAL_USER_KEY, JSON.stringify(user));
-}
-
 async function clearLocalUser(): Promise<void> {
-  await SecureStore.deleteItemAsync(LOCAL_USER_KEY);
-}
-
-function generateLocalUid(): string {
-  return 'local_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 8);
+  await SecureStore.deleteItemAsync('LOCAL_AUTH_USER');
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const firebaseAvailable = true; // JS SDK is always available
+  const firebaseAvailable = isFirebaseAvailable();
+  const googleSignInAvailable = GOOGLE_SIGN_IN_AVAILABLE;
 
   useEffect(() => {
     const auth = getAuth();
@@ -118,6 +115,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signInWithGoogle = async () => {
+    if (!googleSignInAvailable) {
+      throw new Error(
+        'Google sign-in is not configured for this Android build yet. Use Share Code Only for now, or add EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID and rebuild.',
+      );
+    }
+
     await GoogleSignin.hasPlayServices();
     const response = await GoogleSignin.signIn();
     const idToken = response.data?.idToken;
@@ -127,8 +130,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const handleSignOut = async () => {
-    await firebaseSignOut(getAuth());
+    let signOutError: unknown;
+
+    try {
+      await firebaseSignOut(getAuth());
+    } catch (error) {
+      signOutError = error;
+    }
+
+    await clearLocalUser();
+
+    try {
+      await GoogleSignin.signOut();
+    } catch {
+      // Ignore: most sign-outs are anonymous or Apple-based.
+    }
+
+    try {
+      await GoogleSignin.revokeAccess();
+    } catch {
+      // Ignore: revoke fails when there is no cached Google session.
+    }
+
     setUser(null);
+
+    if (signOutError) {
+      throw signOutError;
+    }
   };
 
   const value: AuthContextType = {
@@ -136,6 +164,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isAuthenticated: !!user,
     isLoading,
     firebaseAvailable,
+    googleSignInAvailable,
     signInWithApple,
     signInWithGoogle,
     signInAnonymously,

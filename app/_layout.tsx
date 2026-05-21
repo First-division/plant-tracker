@@ -4,8 +4,8 @@ import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { PlantsProvider, usePlants } from '@/app/context/PlantContext';
-import { AuthProvider } from '@/app/context/AuthContext';
+import { PlantsProvider, usePlants } from '@/contexts/PlantContext';
+import { AuthProvider } from '@/contexts/AuthContext';
 import { useWateringNotifications } from '@/hooks/use-notifications';
 import { getThemeColors } from '@/constants/theme';
 
@@ -32,14 +32,29 @@ function RootLayoutNav() {
             navigationBarHidden: false,
           }}
         />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
         <Stack.Screen
           name="add-plant-modal"
           options={{
             presentation: 'modal',
             title: 'Add New Plant',
             gestureEnabled: false,
-            navigationBarColor: '#535353',
+            navigationBarColor: theme.screenBg,
+            contentStyle: { backgroundColor: theme.screenBg },
+            headerStyle: { backgroundColor: theme.cardBg },
+            headerTintColor: theme.text,
+            headerTitleStyle: { color: theme.text },
+          }}
+        />
+        <Stack.Screen
+          name="whats-new-modal"
+          options={{
+            presentation: 'modal',
+            title: "What's New",
+            navigationBarColor: theme.screenBg,
+            contentStyle: { backgroundColor: theme.screenBg },
+            headerStyle: { backgroundColor: theme.cardBg },
+            headerTintColor: theme.text,
+            headerTitleStyle: { color: theme.text },
           }}
         />
         <Stack.Screen
@@ -56,7 +71,11 @@ function RootLayoutNav() {
           options={{
             presentation: 'modal',
             title: 'Plant Details',
-            navigationBarColor: '#535353',
+            navigationBarColor: theme.screenBg,
+            contentStyle: { backgroundColor: theme.screenBg },
+            headerStyle: { backgroundColor: theme.cardBg },
+            headerTintColor: theme.text,
+            headerTitleStyle: { color: theme.text },
           }}
         />
         <Stack.Screen

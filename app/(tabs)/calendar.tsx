@@ -1,20 +1,25 @@
 import React, { useState, useMemo, useCallback } from 'react';
-import { StyleSheet, View, TouchableOpacity, ScrollView, Image, Alert, RefreshControl } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { StyleSheet, View, TouchableOpacity, ScrollView, Image, Alert, RefreshControl, Platform, useWindowDimensions } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { usePlants, Plant } from '@/app/context/PlantContext';
-import { useAuth } from '@/app/context/AuthContext';
+import { usePlants, Plant } from '@/contexts/PlantContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { getThemeColors } from '@/constants/theme';
+import { getNextWaterDate, getStartOfLocalDay, snapToWaterDay } from '@/services/plant-schedule';
 import { parseCheckIntervalDays } from '@/services/plant-intervals';
+import { getWateringEntries, isSameLocalDay } from '@/services/watering-log';
 
 type CalendarEvent = {
   plant: Plant;
   type: 'completed' | 'scheduled';
   time?: string;
   entryDate?: string;
+  scheduledDate?: string;
+  action?: string;
+  dotColor?: string;
   ownerName?: string;
   ownerId?: string;
 };
@@ -22,32 +27,51 @@ type CalendarEvent = {
 type DayEvents = {
   completed: CalendarEvent[];
   scheduled: CalendarEvent[];
+  history: CalendarEvent[];
 };
 
-function snapToWaterDay(date: Date, waterDay: number | undefined): Date {
-  if (waterDay === undefined) return date;
-  const current = date.getDay();
-  const diff = (waterDay - current + 7) % 7;
-  if (diff === 0) return date;
-  const snapped = new Date(date);
-  snapped.setDate(snapped.getDate() + diff);
-  return snapped;
+function getCalendarDotColor(event: Pick<CalendarEvent, 'action' | 'dotColor'>): string {
+  if (event.dotColor) {
+    return event.dotColor;
+  }
+
+  const normalizedAction = event.action?.trim().toLowerCase();
+  return normalizedAction === 'water' || normalizedAction === 'watered' ? '#4CD964' : '#0A84FF';
 }
 
 function buildDayEventsMap(plants: Plant[], year: number, month: number): Record<number, DayEvents> {
   const map: Record<number, DayEvents> = {};
   const monthStart = new Date(year, month, 1);
   const monthEnd = new Date(year, month + 1, 0);
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayStart = getStartOfLocalDay(new Date());
 
   const ensure = (day: number) => {
-    if (!map[day]) map[day] = { completed: [], scheduled: [] };
+    if (!map[day]) map[day] = { completed: [], scheduled: [], history: [] };
   };
 
   for (const plant of plants) {
-    const log = plant.wateringLog || [];
+    const allHistory = plant.wateringLog || [];
+    const log = getWateringEntries(allHistory);
     const completedDaysForPlant = new Set<number>();
+
+    // 0. All history entries for colored dots and history list
+    for (const entry of allHistory) {
+      const d = new Date(entry.date);
+      if (d.getFullYear() === year && d.getMonth() === month) {
+        const day = d.getDate();
+        ensure(day);
+        map[day].history.push({
+          plant,
+          type: 'completed',
+          time: d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+          entryDate: entry.date,
+          action: entry.action,
+          dotColor: entry.dotColor,
+          ownerName: plant.ownerName,
+          ownerId: plant.ownerId,
+        });
+      }
+    }
 
     // 1. Completed events from watering log
     for (const entry of log) {
@@ -62,6 +86,8 @@ function buildDayEventsMap(plants: Plant[], year: number, month: number): Record
             type: 'completed',
             time: d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
             entryDate: entry.date,
+            action: entry.action,
+            dotColor: entry.dotColor,
             ownerName: plant.ownerName,
             ownerId: plant.ownerId,
           });
@@ -71,16 +97,13 @@ function buildDayEventsMap(plants: Plant[], year: number, month: number): Record
 
     // 2. Scheduled (projected) events — only today or future, not already completed
     const intervalDays = parseCheckIntervalDays(plant.checkInterval);
-    const anchor = log.length > 0 ? new Date(log[log.length - 1].date) : new Date(plant.birthday);
-    if (isNaN(anchor.getTime())) continue;
+    const nextWaterDate = getNextWaterDate(plant, todayStart);
+    if (!nextWaterDate || intervalDays <= 0) continue;
 
-    const diffMs = monthStart.getTime() - anchor.getTime();
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-    let startMultiple = diffDays <= 0 ? 0 : Math.floor(diffDays / intervalDays);
-
-    for (let i = startMultiple; i < startMultiple + 60; i++) {
-      let waterDate = new Date(anchor);
+    for (let i = 0; i < 60; i++) {
+      let waterDate = new Date(nextWaterDate);
       waterDate.setDate(waterDate.getDate() + i * intervalDays);
+
       // Snap to preferred day of the week (only for intervals >= 7 days)
       if (intervalDays >= 7) {
         waterDate = snapToWaterDay(waterDate, plant.waterDay);
@@ -91,7 +114,13 @@ function buildDayEventsMap(plants: Plant[], year: number, month: number): Record
         if (!completedDaysForPlant.has(day) && waterDate >= todayStart) {
           ensure(day);
           if (!map[day].scheduled.some(e => e.plant.id === plant.id)) {
-            map[day].scheduled.push({ plant, type: 'scheduled', ownerName: plant.ownerName, ownerId: plant.ownerId });
+            map[day].scheduled.push({
+              plant,
+              type: 'scheduled',
+              scheduledDate: new Date(year, month, day, 12, 0, 0, 0).toISOString(),
+              ownerName: plant.ownerName,
+              ownerId: plant.ownerId,
+            });
           }
         }
       }
@@ -117,6 +146,8 @@ export default function CalendarScreen() {
   const [currentMonth, setCurrentMonth] = useState(today.getMonth());
   const [selectedDay, setSelectedDay] = useState<number | null>(today.getDate());
   const [refreshing, setRefreshing] = useState(false);
+  const { height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -171,10 +202,14 @@ export default function CalendarScreen() {
     setSelectedDay(today.getDate());
   };
 
-  const handleQuickWater = async (plantId: string, plantName: string) => {
+  const handleQuickWater = async (plantId: string, plantName: string, scheduledDate?: string) => {
     try {
+      const wateredAt = scheduledDate && !isSameLocalDay(new Date(scheduledDate), new Date())
+        ? scheduledDate
+        : undefined;
+
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      await waterPlant(plantId);
+      await waterPlant(plantId, undefined, wateredAt);
     } catch {
       Alert.alert('Error', `Failed to water ${plantName}`);
     }
@@ -183,14 +218,19 @@ export default function CalendarScreen() {
   const handleUnwater = async (plantId: string, plantName: string, entryDate: string) => {
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      await unwaterPlant(plantId, entryDate);
+      await unwaterPlant(plantId, entryDate, true);
     } catch {
       Alert.alert('Error', `Failed to undo watering for ${plantName}`);
     }
   };
 
-  const selectedEvents: DayEvents = selectedDay ? dayEventsMap[selectedDay] || { completed: [], scheduled: [] } : { completed: [], scheduled: [] };
-  const hasAnyEvents = selectedEvents.completed.length > 0 || selectedEvents.scheduled.length > 0;
+  const selectedEvents: DayEvents = selectedDay
+    ? dayEventsMap[selectedDay] || { completed: [], scheduled: [], history: [] }
+    : { completed: [], scheduled: [], history: [] };
+  const hasAnyEvents =
+    selectedEvents.completed.length > 0 ||
+    selectedEvents.scheduled.length > 0 ||
+    selectedEvents.history.length > 0;
 
   const rows: (number | null)[][] = [];
   let currentRow: (number | null)[] = [];
@@ -209,8 +249,15 @@ export default function CalendarScreen() {
     <ThemedView style={[styles.container, { backgroundColor: theme.screenBg }]}>
       <ScrollView
         style={styles.scrollContent}
-        contentContainerStyle={styles.scrollContainer}
+        contentContainerStyle={[
+          styles.scrollContainer,
+          {
+            minHeight: Platform.OS === 'android' ? height + 1 : undefined,
+            paddingBottom: Math.max(insets.bottom + 96, 120),
+          },
+        ]}
         showsVerticalScrollIndicator={false}
+        nestedScrollEnabled
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -288,10 +335,10 @@ export default function CalendarScreen() {
                   </View>
                   {events && (
                     <View style={styles.dotRow}>
-                      {events.completed.slice(0, 3).map((e, idx) => (
-                        <View key={`c-${idx}`} style={[styles.dot, { backgroundColor: getMemberColor(e.ownerId) || '#4CD964' }]} />
+                      {events.history.slice(0, 3).map((e, idx) => (
+                        <View key={`h-${idx}`} style={[styles.dot, { backgroundColor: getCalendarDotColor(e) }]} />
                       ))}
-                      {events.scheduled.slice(0, 3).map((e, idx) => (
+                      {events.history.length === 0 && events.scheduled.slice(0, 3).map((e, idx) => (
                         <View key={`s-${idx}`} style={[styles.dot, { backgroundColor: getMemberColor(e.ownerId) || '#007AFF', opacity: 0.6 }]} />
                       ))}
                     </View>
@@ -309,7 +356,24 @@ export default function CalendarScreen() {
           </ThemedText>
 
           {selectedDay && !hasAnyEvents && (
-            <ThemedText style={[styles.noPlants, { color: theme.secondaryText }]}>No watering events</ThemedText>
+            <ThemedText style={[styles.noPlants, { color: theme.secondaryText }]}>No events</ThemedText>
+          )}
+
+          {selectedEvents.history.length > 0 && (
+            <>
+              <View style={styles.sectionRow}>
+                <View style={[styles.sectionDot, { backgroundColor: '#0A84FF' }]} />
+                <ThemedText style={[styles.sectionLabel, { color: theme.secondaryText }]}>History</ThemedText>
+              </View>
+              {selectedEvents.history.map((event, index) => (
+                <View key={`h-${event.plant.id}-${event.entryDate}-${index}`} style={styles.historyItemRow}>
+                  <View style={[styles.historyItemDot, { backgroundColor: getCalendarDotColor(event) }]} />
+                  <ThemedText style={[styles.historyItemText, { color: theme.text }]}>
+                    {event.plant.name} · {event.action?.trim() || 'Watered'}
+                  </ThemedText>
+                </View>
+              ))}
+            </>
           )}
 
           {/* Completed Section */}
@@ -344,13 +408,15 @@ export default function CalendarScreen() {
                       {event.plant.location}{event.time ? ` · ${event.time}` : ''}
                     </ThemedText>
                   </View>
-                  <TouchableOpacity
-                    style={styles.checkBadge}
-                    onPress={() => event.entryDate && handleUnwater(event.plant.id, event.plant.name, event.entryDate)}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <ThemedText style={styles.checkText}>✓</ThemedText>
-                  </TouchableOpacity>
+                  <View style={styles.completedActions}>
+                    <TouchableOpacity
+                      style={styles.waterToggleDoneButton}
+                      onPress={() => event.entryDate && handleUnwater(event.plant.id, event.plant.name, event.entryDate)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <ThemedText style={styles.waterToggleButtonText}>✓</ThemedText>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               ))}
             </>
@@ -405,11 +471,11 @@ export default function CalendarScreen() {
                       </TouchableOpacity>
                     )}
                     <TouchableOpacity
-                      style={styles.waterButton}
-                      onPress={() => handleQuickWater(event.plant.id, event.plant.name)}
+                      style={styles.waterToggleButton}
+                      onPress={() => handleQuickWater(event.plant.id, event.plant.name, event.scheduledDate)}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
-                      <ThemedText style={styles.waterButtonText}>Water</ThemedText>
+                      <ThemedText style={styles.waterToggleButtonText}>Water</ThemedText>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -463,6 +529,21 @@ const styles = StyleSheet.create({
   sectionRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
   sectionDot: { width: 8, height: 8, borderRadius: 4 },
   sectionLabel: { fontSize: 14, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
+  historyItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 6,
+  },
+  historyItemDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  historyItemText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
   plantRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(128,128,128,0.2)' },
   plantThumb: { width: 44, height: 44, borderRadius: 10, backgroundColor: 'rgba(128,128,128,0.15)' },
   plantThumbPlaceholder: { width: 44, height: 44, borderRadius: 10, backgroundColor: 'rgba(128,128,128,0.15)', justifyContent: 'center', alignItems: 'center' },
@@ -473,12 +554,12 @@ const styles = StyleSheet.create({
   ownerBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 },
   ownerBadgeText: { fontSize: 10, fontWeight: '600', color: '#FFF' },
   plantLocation: { fontSize: 13, marginTop: 2 },
-  checkBadge: { width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(76,217,100,0.2)', justifyContent: 'center', alignItems: 'center' },
-  checkText: { fontSize: 16, color: '#4CD964', fontWeight: '700' },
+  completedActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   scheduledActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   remindButton: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12 },
   remindButtonText: { fontSize: 12, fontWeight: '600', color: '#FFF' },
-  waterButton: { backgroundColor: '#007AFF', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16 },
-  waterButtonText: { fontSize: 14, fontWeight: '600', color: '#FFF' },
+  waterToggleButton: { backgroundColor: '#007AFF', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, minWidth: 64, alignItems: 'center' },
+  waterToggleDoneButton: { backgroundColor: '#34C759', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, minWidth: 64, alignItems: 'center' },
+  waterToggleButtonText: { fontSize: 14, fontWeight: '600', color: '#FFF' },
   memberColorBar: { width: 4, height: 36, borderRadius: 2, marginRight: 8 },
 });

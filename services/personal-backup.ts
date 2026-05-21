@@ -1,23 +1,34 @@
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
-  setDoc,
-  deleteDoc,
-  updateDoc,
   onSnapshot,
-  writeBatch,
+  setDoc,
 } from 'firebase/firestore';
 import * as FileSystem from 'expo-file-system/legacy';
 import { deleteObject, getDownloadURL, ref as storageRef, uploadString } from 'firebase/storage';
-import { getDb, getStorageService } from './firebase';
 import { Plant, WateringEntry } from '@/contexts/PlantContext';
-import { removeWateringEntriesForDay, upsertWateringEntryForDay } from './watering-log';
+import { getDb, getStorageService } from './firebase';
 
-function plantsCol(householdId: string) {
-  return collection(getDb(), 'households', householdId, 'plants');
+function personalPlantsCol(userId: string) {
+  return collection(getDb(), 'users', userId, 'plants');
 }
+
+function deletedPlantsCol(userId: string) {
+  return collection(getDb(), 'users', userId, 'deletedPlants');
+}
+
+export type DeletedPlantTombstone = {
+  plantId: string;
+  deletedAt: string;
+};
+
+export type PersonalBackupSnapshot = {
+  plants: Plant[];
+  deletedPlantTombstones: DeletedPlantTombstone[];
+};
 
 function isRemotePhotoUri(photoUri?: string): boolean {
   return !!photoUri && (/^https?:\/\//i.test(photoUri) || photoUri.startsWith('data:'));
@@ -54,8 +65,8 @@ function getPhotoContentType(photoUri: string): string {
   }
 }
 
-function buildPlantPhotoStoragePath(householdId: string, plantId: string, photoUri: string): string {
-  return `households/${householdId}/plants/${plantId}/photo.${getPhotoExtension(photoUri)}`;
+function buildPlantPhotoStoragePath(userId: string, plantId: string, photoUri: string): string {
+  return `users/${userId}/plants/${plantId}/photo.${getPhotoExtension(photoUri)}`;
 }
 
 function normalizeFirestoreTimestamp(value: unknown, fallback: string): string {
@@ -89,7 +100,7 @@ async function deletePlantPhotoFromStorage(storagePath?: string | null): Promise
         : undefined;
 
     if (errorCode !== 'storage/object-not-found') {
-      console.warn('Error deleting plant photo from storage:', error);
+      console.warn('Error deleting personal backup photo from storage:', error);
     }
   }
 }
@@ -97,10 +108,10 @@ async function deletePlantPhotoFromStorage(storagePath?: string | null): Promise
 async function uploadPlantPhotoToStorage(
   photoUri: string,
   plantId: string,
-  householdId: string,
+  userId: string,
   previousStoragePath?: string,
 ): Promise<{ photoUri: string; photoStoragePath: string }> {
-  const nextStoragePath = buildPlantPhotoStoragePath(householdId, plantId, photoUri);
+  const nextStoragePath = buildPlantPhotoStoragePath(userId, plantId, photoUri);
   const encodedPhoto = await FileSystem.readAsStringAsync(photoUri, {
     encoding: FileSystem.EncodingType.Base64,
   });
@@ -122,9 +133,9 @@ async function uploadPlantPhotoToStorage(
   };
 }
 
-async function preparePlantForFirestore(
+async function preparePlantForBackup(
   plant: Plant,
-  householdId: string,
+  userId: string,
   existingPlant?: Plant,
 ): Promise<Plant> {
   const createdAt = plant.createdAt || existingPlant?.createdAt || getLegacyPlantTimestamp(plant.id);
@@ -165,7 +176,7 @@ async function preparePlantForFirestore(
   const uploadedPhoto = await uploadPlantPhotoToStorage(
     normalizedPhotoUri,
     plant.id,
-    householdId,
+    userId,
     previousStoragePath,
   );
 
@@ -176,148 +187,6 @@ async function preparePlantForFirestore(
     updatedAt,
   };
 }
-
-async function persistPlantRecord(
-  plant: Plant,
-  householdId: string,
-  existingPlant?: Plant,
-): Promise<Plant> {
-  const nextPlant = await preparePlantForFirestore(plant, householdId, existingPlant);
-  await setDoc(doc(plantsCol(householdId), plant.id), plantToFirestore(nextPlant), { merge: true });
-  return nextPlant;
-}
-
-export async function uploadLocalPlants(plants: Plant[], householdId: string): Promise<void> {
-  for (const plant of plants) {
-    const docRef = doc(plantsCol(householdId), plant.id);
-    const existing = await getDoc(docRef);
-    if (!existing.exists()) {
-      await persistPlantRecord(plant, householdId);
-    }
-  }
-}
-
-export function subscribeToPlants(
-  householdId: string,
-  callback: (plants: Plant[]) => void,
-): () => void {
-  return onSnapshot(
-    plantsCol(householdId),
-    (snapshot) => {
-      const plants: Plant[] = snapshot.docs.map((d) => ({
-        ...firestoreToPlant(d.data(), d.id),
-        id: d.id,
-      }));
-      plants.sort((a, b) => parseInt(b.id) - parseInt(a.id));
-      callback(plants);
-    },
-    (error) => {
-      console.error('Firestore plants subscription error:', error);
-    },
-  );
-}
-
-export async function syncPlantToFirestore(plant: Plant, householdId: string): Promise<void> {
-  const docRef = doc(plantsCol(householdId), plant.id);
-  const existing = await getDoc(docRef);
-  const existingPlant = existing.exists()
-    ? { ...firestoreToPlant(existing.data(), plant.id), id: plant.id }
-    : undefined;
-
-  await persistPlantRecord(plant, householdId, existingPlant);
-}
-
-export async function deletePlantFromFirestore(plantId: string, householdId: string): Promise<void> {
-  const docRef = doc(plantsCol(householdId), plantId);
-  const existing = await getDoc(docRef);
-
-  if (existing.exists()) {
-    await deletePlantPhotoFromStorage(existing.data().photoStoragePath);
-  }
-
-  await deleteDoc(docRef);
-}
-
-export async function addWateringEntry(
-  plantId: string,
-  householdId: string,
-  entry: WateringEntry,
-): Promise<void> {
-  const plantDoc = await getDoc(doc(plantsCol(householdId), plantId));
-  if (!plantDoc.exists()) return;
-
-  const data = plantDoc.data();
-  const log: WateringEntry[] = data.wateringLog || [];
-
-  await updateDoc(doc(plantsCol(householdId), plantId), {
-    wateringLog: upsertWateringEntryForDay(log, entry),
-    updatedAt: new Date().toISOString(),
-  });
-}
-
-export async function removeWateringEntry(
-  plantId: string,
-  householdId: string,
-  entryDate: string,
-  removeAllForDay = false,
-): Promise<void> {
-  const plantDoc = await getDoc(doc(plantsCol(householdId), plantId));
-  if (plantDoc.exists()) {
-    const data = plantDoc.data();
-    const log: WateringEntry[] = data.wateringLog || [];
-    const nextLog = removeAllForDay
-      ? removeWateringEntriesForDay(log, entryDate)
-      : log.filter((entry) => entry.date !== entryDate);
-
-    await updateDoc(doc(plantsCol(householdId), plantId), {
-      wateringLog: nextLog,
-      updatedAt: new Date().toISOString(),
-    });
-  }
-}
-
-export async function clearWateringLog(
-  plantId: string,
-  householdId: string,
-): Promise<void> {
-  await updateDoc(doc(plantsCol(householdId), plantId), {
-    wateringLog: [],
-    updatedAt: new Date().toISOString(),
-  });
-}
-
-export async function snapshotPlantsFromFirestore(householdId: string): Promise<Plant[]> {
-  const snapshot = await getDocs(plantsCol(householdId));
-  return snapshot.docs.map((d) => ({
-    ...firestoreToPlant(d.data(), d.id),
-    id: d.id,
-  }));
-}
-
-export async function backfillPlantOwnership(
-  householdId: string,
-  ownerId: string,
-  ownerName: string,
-): Promise<void> {
-  const snapshot = await getDocs(plantsCol(householdId));
-  const batch = writeBatch(getDb());
-  let count = 0;
-
-  for (const d of snapshot.docs) {
-    const data = d.data();
-    if (!data.ownerId) {
-      batch.update(d.ref, { ownerId, ownerName });
-      count++;
-    }
-  }
-
-  if (count > 0) {
-    await batch.commit();
-    console.log(`Backfilled ${count} plants with ownerId: ${ownerId}`);
-  }
-}
-
-// --- Helpers ---
 
 function plantToFirestore(plant: Plant): Record<string, any> {
   return {
@@ -360,4 +229,140 @@ function firestoreToPlant(data: Record<string, any>, plantId: string): Omit<Plan
     waterDay: data.waterDay ?? undefined,
     reminderTime: data.reminderTime || undefined,
   };
+}
+
+function firestoreToDeletedPlantTombstone(
+  data: Record<string, any>,
+  plantId: string,
+): DeletedPlantTombstone {
+  return {
+    plantId,
+    deletedAt: normalizeFirestoreTimestamp(data.deletedAt, new Date().toISOString()),
+  };
+}
+
+async function persistPlantRecord(plant: Plant, userId: string, existingPlant?: Plant): Promise<Plant> {
+  const nextPlant = await preparePlantForBackup(plant, userId, existingPlant);
+  await setDoc(doc(personalPlantsCol(userId), plant.id), plantToFirestore(nextPlant), { merge: true });
+  await deleteDoc(doc(deletedPlantsCol(userId), plant.id));
+
+  await setDoc(doc(getDb(), 'users', userId), {
+    personalBackupEnabled: true,
+    lastPersonalBackupAt: new Date().toISOString(),
+  }, { merge: true });
+
+  return nextPlant;
+}
+
+export function subscribeToPersonalBackup(
+  userId: string,
+  callback: (snapshot: PersonalBackupSnapshot) => void,
+): () => void {
+  let latestPlants: Plant[] = [];
+  let latestDeletedPlantTombstones: DeletedPlantTombstone[] = [];
+  let plantsReady = false;
+  let deletedPlantsReady = false;
+
+  const emitSnapshot = () => {
+    if (!plantsReady || !deletedPlantsReady) {
+      return;
+    }
+
+    callback({
+      plants: latestPlants,
+      deletedPlantTombstones: latestDeletedPlantTombstones,
+    });
+  };
+
+  const unsubscribePlants = onSnapshot(
+    personalPlantsCol(userId),
+    (snapshot) => {
+      latestPlants = snapshot.docs.map((d) => ({
+        ...firestoreToPlant(d.data(), d.id),
+        id: d.id,
+      }));
+      latestPlants.sort((a, b) => Number.parseInt(b.id, 10) - Number.parseInt(a.id, 10));
+      plantsReady = true;
+      emitSnapshot();
+    },
+    (error) => {
+      console.error('Personal backup subscription error:', error);
+    },
+  );
+
+  const unsubscribeDeletedPlants = onSnapshot(
+    deletedPlantsCol(userId),
+    (snapshot) => {
+      latestDeletedPlantTombstones = snapshot.docs.map((deletedPlantDoc) =>
+        firestoreToDeletedPlantTombstone(deletedPlantDoc.data(), deletedPlantDoc.id),
+      );
+      deletedPlantsReady = true;
+      emitSnapshot();
+    },
+    (error) => {
+      console.error('Personal backup tombstone subscription error:', error);
+    },
+  );
+
+  return () => {
+    unsubscribePlants();
+    unsubscribeDeletedPlants();
+  };
+}
+
+export async function syncPlantToPersonalBackup(plant: Plant, userId: string): Promise<Plant> {
+  const docRef = doc(personalPlantsCol(userId), plant.id);
+  const existing = await getDoc(docRef);
+  const existingPlant = existing.exists()
+    ? { ...firestoreToPlant(existing.data(), plant.id), id: plant.id }
+    : undefined;
+
+  return persistPlantRecord(plant, userId, existingPlant);
+}
+
+export async function deletePlantFromPersonalBackup(plantId: string, userId: string): Promise<void> {
+  const docRef = doc(personalPlantsCol(userId), plantId);
+  const existing = await getDoc(docRef);
+  const deletedAt = new Date().toISOString();
+
+  if (existing.exists()) {
+    await deletePlantPhotoFromStorage(existing.data().photoStoragePath);
+  }
+
+  await setDoc(doc(deletedPlantsCol(userId), plantId), {
+    deletedAt,
+  }, { merge: true });
+
+  await deleteDoc(docRef);
+
+  await setDoc(doc(getDb(), 'users', userId), {
+    lastPersonalBackupAt: deletedAt,
+  }, { merge: true });
+}
+
+export async function snapshotPersonalBackup(userId: string): Promise<PersonalBackupSnapshot> {
+  const [plantsSnapshot, deletedPlantsSnapshot] = await Promise.all([
+    getDocs(personalPlantsCol(userId)),
+    getDocs(deletedPlantsCol(userId)),
+  ]);
+
+  const plants = plantsSnapshot.docs.map((plantDoc) => ({
+    ...firestoreToPlant(plantDoc.data(), plantDoc.id),
+    id: plantDoc.id,
+  }));
+  plants.sort((a, b) => Number.parseInt(b.id, 10) - Number.parseInt(a.id, 10));
+
+  return {
+    plants,
+    deletedPlantTombstones: deletedPlantsSnapshot.docs.map((deletedPlantDoc) =>
+      firestoreToDeletedPlantTombstone(deletedPlantDoc.data(), deletedPlantDoc.id),
+    ),
+  };
+}
+
+export async function markPersonalBackupDisabled(userId: string): Promise<void> {
+  await setDoc(doc(getDb(), 'users', userId), {
+    personalBackupEnabled: false,
+    lastPersonalBackupAt: new Date().toISOString(),
+  }, { merge: true });
 }

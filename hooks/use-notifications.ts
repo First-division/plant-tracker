@@ -1,12 +1,15 @@
 import { useEffect, useRef } from 'react';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
-import { usePlants, Plant } from '@/app/context/PlantContext';
+import { usePlants, Plant } from '@/contexts/PlantContext';
 import { parseCheckIntervalDays } from '@/services/plant-intervals';
+import { getMostRecentWateringEntryOnOrBefore, getWateringEntries } from '@/services/watering-log';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
     shouldPlaySound: true,
     shouldSetBadge: false,
   }),
@@ -29,8 +32,10 @@ function getNextWaterDate(plant: Plant): Date {
   const log = plant.wateringLog || [];
   let next: Date;
 
-  if (log.length > 0) {
-    const lastWatered = new Date(log[log.length - 1].date);
+  const latestWatering = getMostRecentWateringEntryOnOrBefore(getWateringEntries(log), now);
+
+  if (latestWatering) {
+    const lastWatered = new Date(latestWatering.date);
     next = new Date(lastWatered);
     next.setDate(next.getDate() + intervalDays);
     if (next < now) next = new Date(now);
@@ -78,11 +83,9 @@ async function registerForPushNotifications(): Promise<boolean> {
 function buildNotificationBody(plant: Plant): string {
   const base = `Your ${plant.name} in ${plant.location} needs watering today.`;
   const log = plant.wateringLog || [];
-  if (log.length > 0) {
-    const last = log[log.length - 1];
-    if (last.wateredBy) {
-      return `${last.wateredBy} last watered this plant. ${base}`;
-    }
+  const latestWatering = getMostRecentWateringEntryOnOrBefore(getWateringEntries(log), new Date());
+  if (latestWatering?.wateredBy) {
+    return `${latestWatering.wateredBy} last watered this plant. ${base}`;
   }
   return base;
 }

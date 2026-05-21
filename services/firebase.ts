@@ -5,10 +5,17 @@ import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import { getFirestore as _getFirestore, Firestore } from 'firebase/firestore';
 import {
   initializeAuth,
-  getReactNativePersistence,
   Auth,
 } from 'firebase/auth';
+import { getStorage as _getStorage, FirebaseStorage } from 'firebase/storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
+type InitializeAuthOptions = NonNullable<Parameters<typeof initializeAuth>[1]>;
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { getReactNativePersistence } = require('@firebase/auth/dist/rn/index.js') as {
+  getReactNativePersistence: (storage: typeof AsyncStorage) => InitializeAuthOptions['persistence'];
+};
 
 const firebaseConfig = {
   apiKey: 'AIzaSyD-za4e69NK1yL53BjPXZlhjNJhpawRFro',
@@ -22,6 +29,7 @@ const firebaseConfig = {
 let _app: FirebaseApp | null = null;
 let _db: Firestore | null = null;
 let _auth: Auth | null = null;
+let _storage: FirebaseStorage | null = null;
 
 function getAppInstance(): FirebaseApp {
   if (!_app) {
@@ -44,6 +52,13 @@ export function getAuth(): Auth {
     });
   }
   return _auth;
+}
+
+export function getStorageService(): FirebaseStorage {
+  if (!_storage) {
+    _storage = _getStorage(getAppInstance());
+  }
+  return _storage;
 }
 
 // Firebase JS SDK is always available — no native modules needed.

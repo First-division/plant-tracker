@@ -1,5 +1,6 @@
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useRef, useMemo, useCallback, useEffect } from 'react';
 import {
+  Animated,
   StyleSheet,
   View,
   Text,
@@ -12,20 +13,25 @@ import {
   FlatList,
   useColorScheme,
   Clipboard,
+  Linking,
   PanResponder,
   LayoutChangeEvent,
   Platform,
+  InteractionManager,
 } from 'react-native';
-import { usePlants, AppAppearance } from '@/app/context/PlantContext';
-import { useAuth } from '@/app/context/AuthContext';
+import { usePlants, AppAppearance } from '@/contexts/PlantContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useNavigation } from '@react-navigation/native';
+import Constants from 'expo-constants';
+import * as Application from 'expo-application';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { COLOR_THEMES, ColorThemeName, MEMBER_COLORS, getThemeColors } from '@/constants/theme';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as WebBrowser from 'expo-web-browser';
 
-// ---- Simple HSV Color Picker (no external deps) ----
+// ---- Simple HSV Color Picker ----
 function hsvToHex(h: number, s: number, v: number): string {
   const c = v * s;
   const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
@@ -228,6 +234,176 @@ const cpStyles = StyleSheet.create({
 });
 
 const INTERVALS = ['2 days', '5 days', '1 week', '2 weeks', '3 weeks', '1 month', '2 months', '3 months', '4 months'];
+const PRIVACY_POLICY_URL = 'https://first-division.github.io/';
+
+type AppGuideTabKey = 'adding' | 'household' | 'viewing' | 'calendar';
+
+type AppGuideTopic = {
+  key: AppGuideTabKey;
+  label: string;
+  title: string;
+  intro: string;
+  sections: {
+    title: string;
+    items: string[];
+  }[];
+};
+
+const APP_GUIDE_TOPICS: AppGuideTopic[] = [
+  {
+    key: 'adding',
+    label: 'Adding Plants',
+    title: 'Adding Plants',
+    intro: 'Set up detailed plant cards so reminders, watering history, and household sharing stay accurate from the start.',
+    sections: [
+      {
+        title: 'What You Can Add',
+        items: [
+          'Give each plant a name, room, birthday, photo, and reminder time so the record is easy to recognize later.',
+          'Set the watering interval with years, months, and days so the schedule fits each plant instead of forcing a one-size-fits-all rule.',
+          'Choose a preferred watering day for longer schedules if you want weekly care to land on the same weekday.',
+        ],
+      },
+      {
+        title: 'Best Setup Tips',
+        items: [
+          'Use clear names like Front Porch Fern or Kitchen Pothos so reminders make sense at a glance.',
+          'Add a photo when you can, especially in a household, so everyone knows which plant they are looking at.',
+          'Keep the location specific enough that family members can find the plant without guessing.',
+        ],
+      },
+      {
+        title: 'Helpful Defaults',
+        items: [
+          'Default Watering in Settings pre-fills new plants to save time when many plants follow the same schedule.',
+          'You can still adjust every plant before saving, so defaults speed things up without locking you in.',
+        ],
+      },
+    ],
+  },
+  {
+    key: 'household',
+    label: 'Household',
+    title: 'Household Sharing',
+    intro: 'Households let family members share one plant collection, keep plant ownership visible, and make watering coordination easier.',
+    sections: [
+      {
+        title: 'Why Household Helps',
+        items: [
+          'Everyone in the household can work from the same shared plant list instead of rebuilding plants on each device.',
+          'Household member colors make it easier to tell who owns or manages a plant when you look at reminders and calendars.',
+          'A share code makes inviting someone quick, especially when you want another person to help with care right away.',
+        ],
+      },
+      {
+        title: 'Google and Apple Sign-In',
+        items: [
+          'Google and Apple are the best long-term choices because those accounts are easier to recover after reinstalling the app or moving to a new phone.',
+          'Google is a strong cross-platform option for Android and iPhone. Apple is especially convenient for iPhone users who want Apple ID based sign-in.',
+          'Signed-in accounts make household history clearer because names and ownership details stay more stable over time.',
+        ],
+      },
+      {
+        title: 'Share Code Only',
+        items: [
+          'Share Code Only is the fastest path when you want quick access without connecting Google or Apple.',
+          'It is useful for simple setups, short-term household access, or people who prefer not to attach a personal account.',
+          'The tradeoff is recovery: if the app is removed or the device changes, restoring that same anonymous session is harder than with Google or Apple.',
+        ],
+      },
+      {
+        title: 'Which Option to Choose',
+        items: [
+          'Choose Google or Apple if you want the safest long-term household setup and easier account recovery.',
+          'Choose Share Code Only if speed and simplicity matter more than cross-device recovery.',
+        ],
+      },
+    ],
+  },
+  {
+    key: 'viewing',
+    label: 'Viewing Plants',
+    title: 'Viewing Plants',
+    intro: 'Use Home, Plant Detail, Calendar, and History together to quickly spot what needs action and what was already done.',
+    sections: [
+      {
+        title: 'Home Screen Basics',
+        items: [
+          'Tap the + button in the top-right to open Add Plant and create a new plant card.',
+          'Use the Search bar and filter chips to narrow by plant name, location, or household member.',
+          'Tap any plant card to open Plant Detail where you can water, edit, delete, or add history events.',
+        ],
+      },
+      {
+        title: 'Plant Detail Elements',
+        items: [
+          'Use the Water button to log watering for today, or tap again to undo today’s watering.',
+          'In the History section, enter an action like Trimmed, Moved, or Fertilized, pick a preset dot color, then tap Add.',
+          'Long-press any history row to delete that single entry, or use the X in the header to clear all history for that plant.',
+        ],
+      },
+      {
+        title: 'Calendar and Dots',
+        items: [
+          'Calendar day dots now reflect your history entry colors, so custom actions are visible directly on each date.',
+          'Tap any date to see a day breakdown with History, Completed, and Scheduled sections.',
+          'Scheduled dots show upcoming care, while history dots show what actually happened on that date.',
+        ],
+      },
+    ],
+  },
+  {
+    key: 'calendar',
+    label: 'Calendar',
+    title: 'Calendar Guide',
+    intro: 'The Calendar screen helps you see what happened, what is due, and who is responsible in one timeline view.',
+    sections: [
+      {
+        title: 'Reading Calendar Dots',
+        items: [
+          'History dots use the saved color from each history entry, so actions like Trimmed or Moved are visible directly on the day.',
+          'Scheduled dots show upcoming planned watering events when no history event has been logged yet for that day.',
+          'In household mode, owner/member color indicators still appear in day details so responsibility is clear.',
+        ],
+      },
+      {
+        title: 'Day Details Panel',
+        items: [
+          'Tap any date to open its detail panel with History, Completed, and Scheduled sections.',
+          'History lists all logged actions for that date, including custom actions added from Plant Detail.',
+          'Completed shows watering events and lets you undo a watering entry from the selected day.',
+        ],
+      },
+      {
+        title: 'Quick Actions',
+        items: [
+          'Use the Water button in Scheduled items to log watering without leaving Calendar.',
+          'Use the Remind button on family plants to notify the owner to water that plant.',
+          'Use Today and month arrows at the top to jump between dates quickly.',
+        ],
+      },
+      {
+        title: 'Best Practices',
+        items: [
+          'If calendar dots feel noisy, standardize your history colors by action type (for example: prune = orange, move = blue).',
+          'Keep reminder intervals realistic and update plant schedules when seasons change for better projections.',
+          'Use History actions consistently so Calendar becomes a reliable care timeline, not just a reminder board.',
+        ],
+      },
+    ],
+  },
+];
+
+function buildChromeBrowserUrl(url: string): string {
+  if (Platform.OS === 'ios') {
+    return url.startsWith('https://')
+      ? url.replace('https://', 'googlechromes://')
+      : url.replace('http://', 'googlechrome://');
+  }
+
+  const strippedUrl = url.replace(/^https?:\/\//, '');
+  return `intent://${strippedUrl}#Intent;scheme=https;package=com.android.chrome;end`;
+}
 
 const COMMON_TIMEZONES = [
   'America/New_York',
@@ -272,7 +448,14 @@ export default function SettingsScreen() {
     defaultCheckInterval,
     setDefaultCheckInterval,
     resetUserData,
+    personalBackupEnabled,
+    personalBackupAuthPending,
+    setPersonalBackupEnabled,
+    setPersonalBackupAuthPending,
+    syncPersonalBackupNow,
     householdEnabled,
+    householdAuthPending,
+    setHouseholdAuthPending,
     setHouseholdEnabled,
     householdId,
     householdCode,
@@ -291,15 +474,21 @@ export default function SettingsScreen() {
   const { user, isAuthenticated, signOut, firebaseAvailable } = useAuth();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-
-  // Auto-enable household after returning from auth modal
-  const pendingHouseholdEnableRef = useRef(false);
-  useEffect(() => {
-    if (isAuthenticated && pendingHouseholdEnableRef.current) {
-      pendingHouseholdEnableRef.current = false;
-      void setHouseholdEnabled(true);
-    }
-  }, [isAuthenticated, setHouseholdEnabled]);
+  const hasRecoverableAuth = !!user && !user.isAnonymous;
+  const backupAccountLabel = user?.email || user?.displayName || 'Signed in';
+  const showBackupAccountRow = personalBackupEnabled && hasRecoverableAuth;
+  const showBackupSyncRow = personalBackupEnabled && !householdEnabled && hasRecoverableAuth;
+  const nativeApplicationVersion =
+    Application.nativeApplicationVersion || Constants.expoConfig?.version || 'Unknown';
+  const nativeBuildVersion =
+    Application.nativeBuildVersion ||
+    (typeof Constants.expoConfig?.ios?.buildNumber === 'string' ? Constants.expoConfig.ios.buildNumber : undefined) ||
+    (typeof Constants.expoConfig?.android?.versionCode === 'number'
+      ? String(Constants.expoConfig.android.versionCode)
+      : undefined);
+  const appVersionLabel = nativeBuildVersion
+    ? `${nativeApplicationVersion} (build ${nativeBuildVersion})`
+    : nativeApplicationVersion;
 
   const systemScheme = useColorScheme();
   const effectiveScheme = appearance === 'system' ? systemScheme : appearance;
@@ -325,8 +514,18 @@ export default function SettingsScreen() {
   const [colorPickerTab, setColorPickerTab] = useState<'presets' | 'custom'>('presets');
   const [customPickerColor, setCustomPickerColor] = useState(householdMemberColor);
   const [membersModalVisible, setMembersModalVisible] = useState(false);
+  const [infoModalVisible, setInfoModalVisible] = useState(false);
+  const [infoTab, setInfoTab] = useState<AppGuideTabKey>('adding');
+  const [infoTabScrollX, setInfoTabScrollX] = useState(0);
+  const [infoTabViewportWidth, setInfoTabViewportWidth] = useState(0);
+  const [infoTabContentWidth, setInfoTabContentWidth] = useState(0);
+  const [privacyBrowserModalVisible, setPrivacyBrowserModalVisible] = useState(false);
+  const [showChromeBrowserOption, setShowChromeBrowserOption] = useState(Platform.OS === 'android');
   const settingsModalPresentationStyle = Platform.OS === 'ios' ? 'formSheet' : 'fullScreen';
   const androidModalTopInset = Platform.OS === 'android' ? insets.top : 0;
+  const modalBottomPadding = Math.max(insets.bottom, 24);
+  const settingsTopPadding = Platform.OS === 'android' ? 60 : Math.max(insets.top + 6, 18);
+  const settingsFooterSpacerHeight = Platform.OS === 'android' ? Math.max(insets.bottom + 88, 112) : 40;
 
   // Cross-platform prompt modal (replaces iOS-only Alert.prompt)
   const [promptConfig, setPromptConfig] = useState<{
@@ -373,6 +572,34 @@ export default function SettingsScreen() {
   const filteredTimezones = tzSearch
     ? allTimezones.filter((tz) => tz.toLowerCase().includes(tzSearch.toLowerCase()))
     : allTimezones;
+  const settingsScrollRef = useRef<ScrollView>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      let isCancelled = false;
+      let resetTimeout: ReturnType<typeof setTimeout> | null = null;
+
+      const interactionHandle = InteractionManager.runAfterInteractions(() => {
+        if (isCancelled) return;
+
+        settingsScrollRef.current?.scrollTo({ y: 0, animated: false });
+
+        resetTimeout = setTimeout(() => {
+          if (!isCancelled) {
+            settingsScrollRef.current?.scrollTo({ y: 0, animated: false });
+          }
+        }, 50);
+      });
+
+      return () => {
+        isCancelled = true;
+        interactionHandle.cancel();
+        if (resetTimeout) {
+          clearTimeout(resetTimeout);
+        }
+      };
+    }, []),
+  );
 
   const handleEditName = () => {
     showPrompt('Edit Name', 'Enter your name', (value) => {
@@ -400,6 +627,89 @@ export default function SettingsScreen() {
         },
       ],
     );
+  };
+
+  const handleEnablePersonalBackup = () => {
+    if (!firebaseAvailable) {
+      Alert.alert(
+        'Development Build Required',
+        'Cloud backup requires Firebase to be configured in a development or store build.',
+      );
+      return;
+    }
+
+    if (householdEnabled) {
+      Alert.alert(
+        'Household Sync Active',
+        'Household sharing already syncs your plants. Turn off household sharing first if you want solo cloud backup instead.',
+      );
+      return;
+    }
+
+    setPersonalBackupAuthPending(true);
+
+    if (hasRecoverableAuth) {
+      void (async () => {
+        try {
+          await setPersonalBackupEnabled(true);
+        } catch (e: any) {
+          setPersonalBackupAuthPending(false);
+          Alert.alert('Cloud Backup', e.message || 'Failed to enable cloud backup.');
+        }
+      })();
+      return;
+    }
+
+    if (isAuthenticated) {
+      void (async () => {
+        try {
+          await signOut();
+          router.push({ pathname: '/auth-modal', params: { purpose: 'backup' } });
+        } catch (e: any) {
+          setPersonalBackupAuthPending(false);
+          Alert.alert('Cloud Backup', e.message || 'Failed to reset sign-in before enabling backup.');
+        }
+      })();
+      return;
+    }
+
+    router.push({ pathname: '/auth-modal', params: { purpose: 'backup' } });
+  };
+
+  const handleDisablePersonalBackup = () => {
+    Alert.alert(
+      'Turn Off Cloud Backup',
+      'Your plants stay on this device. Your cloud copy remains available the next time you sign in again.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Turn Off',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setPersonalBackupAuthPending(false);
+              await setPersonalBackupEnabled(false);
+              if (hasRecoverableAuth && !householdEnabled) {
+                await signOut();
+              }
+            } catch (e: any) {
+              Alert.alert('Cloud Backup', e.message || 'Failed to turn off cloud backup.');
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleSyncBackupNow = () => {
+    void (async () => {
+      try {
+        await syncPersonalBackupNow();
+        Alert.alert('Cloud Backup', 'Your local plants were compared with your cloud backup and any newer local changes were uploaded.');
+      } catch (e: any) {
+        Alert.alert('Cloud Backup', e.message || 'Failed to sync your backup right now.');
+      }
+    })();
   };
 
   const formatTimezone = (tz: string) => tz.replace(/_/g, ' ');
@@ -457,9 +767,95 @@ export default function SettingsScreen() {
     { key: 'dark', label: 'Dark' },
     { key: 'system', label: 'System' },
   ];
+  const activeGuideTopic = useMemo(
+    () => APP_GUIDE_TOPICS.find((topic) => topic.key === infoTab) ?? APP_GUIDE_TOPICS[0],
+    [infoTab],
+  );
+  const infoTabCanScroll = infoTabContentWidth - infoTabViewportWidth > 8;
+  const showInfoTabLeftArrow = infoTabCanScroll && infoTabScrollX > 8;
+  const showInfoTabRightArrow = infoTabCanScroll && (infoTabContentWidth - (infoTabScrollX + infoTabViewportWidth)) > 8;
+  const infoTabLeftArrowOpacity = useRef(new Animated.Value(0)).current;
+  const infoTabRightArrowOpacity = useRef(new Animated.Value(0)).current;
+  const defaultBrowserLabel = Platform.OS === 'ios' ? 'Safari / Default Browser' : 'Default Browser';
+
+  useEffect(() => {
+    Animated.timing(infoTabLeftArrowOpacity, {
+      toValue: showInfoTabLeftArrow ? 1 : 0,
+      duration: 180,
+      useNativeDriver: true,
+    }).start();
+  }, [infoTabLeftArrowOpacity, showInfoTabLeftArrow]);
+
+  useEffect(() => {
+    Animated.timing(infoTabRightArrowOpacity, {
+      toValue: showInfoTabRightArrow ? 1 : 0,
+      duration: 180,
+      useNativeDriver: true,
+    }).start();
+  }, [infoTabRightArrowOpacity, showInfoTabRightArrow]);
+
+  const runAfterPrivacyPickerClose = (callback: () => void) => {
+    setPrivacyBrowserModalVisible(false);
+    setTimeout(callback, Platform.OS === 'ios' ? 250 : 0);
+  };
+
+  const openPrivacyPolicyInBrowser = async (mode: 'default' | 'chrome' | 'inApp') => {
+    runAfterPrivacyPickerClose(() => {
+      void (async () => {
+        try {
+          if (mode === 'inApp') {
+            await WebBrowser.openBrowserAsync(PRIVACY_POLICY_URL);
+            return;
+          }
+
+          if (mode === 'chrome') {
+            const chromeUrl = buildChromeBrowserUrl(PRIVACY_POLICY_URL);
+            try {
+              await Linking.openURL(chromeUrl);
+              return;
+            } catch {
+              Alert.alert(
+                'Chrome Unavailable',
+                'Chrome could not be opened on this device, so the privacy page will open in your default browser instead.',
+              );
+            }
+          }
+
+          await Linking.openURL(PRIVACY_POLICY_URL);
+        } catch (error) {
+          console.error('Error opening privacy policy:', error);
+          Alert.alert('Unable to Open Link', 'Please try again in a moment.');
+        }
+      })();
+    });
+  };
+
+  const handleOpenPrivacyPolicy = async () => {
+    if (Platform.OS === 'ios') {
+      const chromeAvailable = await Linking.canOpenURL(buildChromeBrowserUrl(PRIVACY_POLICY_URL)).catch(() => false);
+      setShowChromeBrowserOption(chromeAvailable);
+    } else {
+      setShowChromeBrowserOption(true);
+    }
+
+    setPrivacyBrowserModalVisible(true);
+  };
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: colors.bg }]} contentContainerStyle={styles.content}>
+    <ScrollView
+      ref={settingsScrollRef}
+      style={[styles.container, { backgroundColor: colors.bg }]}
+      contentContainerStyle={[
+        styles.content,
+        {
+          paddingTop: settingsTopPadding,
+          paddingBottom: Math.max(insets.bottom, 40),
+        },
+      ]}
+      showsVerticalScrollIndicator={false}
+      nestedScrollEnabled
+      keyboardShouldPersistTaps="handled"
+    >
       {/* ACCOUNT */}
       {renderSectionHeader('Account')}
       <View style={[styles.cardGroup, { backgroundColor: colors.card }]}>
@@ -469,6 +865,45 @@ export default function SettingsScreen() {
           label: 'Name',
           value: userName ?? 'Not set',
           onPress: handleEditName,
+        })}
+        {renderRow({
+          icon: 'cloud-upload',
+          iconColor: '#34C759',
+          label: 'Cloud Backup',
+          rightElement: (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              {personalBackupAuthPending && !personalBackupEnabled && (
+                <Ionicons name="time-outline" size={16} color={colors.secondaryText} />
+              )}
+              <Switch
+                value={personalBackupEnabled}
+                disabled={personalBackupAuthPending}
+                onValueChange={(value) => {
+                  if (value) {
+                    handleEnablePersonalBackup();
+                    return;
+                  }
+
+                  handleDisablePersonalBackup();
+                }}
+                trackColor={{ false: '#767577', true: '#34C759' }}
+              />
+            </View>
+          ),
+          isLast: !showBackupAccountRow,
+        })}
+        {showBackupAccountRow && renderRow({
+          icon: 'shield-checkmark',
+          iconColor: '#5856D6',
+          label: 'Backup Account',
+          value: backupAccountLabel,
+          isLast: !showBackupSyncRow,
+        })}
+        {showBackupSyncRow && renderRow({
+          icon: 'sync',
+          iconColor: '#34C759',
+          label: 'Sync Backup Now',
+          onPress: handleSyncBackupNow,
           isLast: true,
         })}
       </View>
@@ -565,12 +1000,15 @@ export default function SettingsScreen() {
             label: 'Household Sharing',
             rightElement: (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                {householdAuthPending && !householdEnabled && (
+                  <Ionicons name="time-outline" size={16} color={colors.secondaryText} />
+                )}
                 {isLocked && (
                   <Ionicons name="lock-closed" size={16} color={colors.secondaryText} />
                 )}
                 <Switch
                   value={householdEnabled}
-                  disabled={isLocked}
+                  disabled={isLocked || householdAuthPending}
                   onValueChange={(val) => {
                     if (isLocked) return;
                     if (val && !firebaseAvailable) {
@@ -581,22 +1019,28 @@ export default function SettingsScreen() {
                       return;
                     }
                     if (val) {
-                      pendingHouseholdEnableRef.current = true;
+                      setHouseholdAuthPending(true);
+
+                      if (personalBackupEnabled) {
+                        void setPersonalBackupEnabled(false).catch((error) => {
+                          console.error('Error disabling personal backup before household auth:', error);
+                        });
+                      }
 
                       if (isAuthenticated) {
                         void (async () => {
                           try {
                             await signOut();
-                            router.push('/auth-modal');
+                            router.push({ pathname: '/auth-modal', params: { purpose: 'household' } });
                           } catch (e: any) {
-                            pendingHouseholdEnableRef.current = false;
+                            setHouseholdAuthPending(false);
                             Alert.alert('Error', e.message || 'Failed to reset household sign-in.');
                           }
                         })();
                         return;
                       }
 
-                      router.push('/auth-modal');
+                      router.push({ pathname: '/auth-modal', params: { purpose: 'household' } });
                       return;
                     }
                     if (!val && householdId && user) {
@@ -612,8 +1056,8 @@ export default function SettingsScreen() {
                             onPress: async () => {
                               try {
                                 await leaveCurrentHousehold(user.uid);
+                                await setHouseholdEnabled(false, { preserveLocalPlants: true });
                                 await signOut();
-                                await setHouseholdEnabled(false);
                               } catch (e: any) {
                                 Alert.alert('Error', e.message);
                               }
@@ -624,7 +1068,7 @@ export default function SettingsScreen() {
                       return;
                     }
 
-                    pendingHouseholdEnableRef.current = false;
+                    setHouseholdAuthPending(false);
                     void (async () => {
                       try {
                         await setHouseholdEnabled(false);
@@ -744,8 +1188,8 @@ export default function SettingsScreen() {
                         if (user) {
                           try {
                             await leaveCurrentHousehold(user.uid);
+                            await setHouseholdEnabled(false, { preserveLocalPlants: true });
                             await signOut();
-                            setHouseholdEnabled(false);
                           } catch (e: any) {
                             Alert.alert('Error', e.message);
                           }
@@ -778,15 +1222,209 @@ export default function SettingsScreen() {
       {renderSectionHeader('About')}
       <View style={[styles.cardGroup, { backgroundColor: colors.card }]}>
         {renderRow({
+          icon: 'information-circle',
+          iconColor: '#0A84FF',
+          label: 'App Guide',
+          onPress: () => {
+            setInfoTab('adding');
+            setInfoModalVisible(true);
+          },
+        })}
+        {renderRow({
+          icon: 'sparkles',
+          iconColor: '#FF9500',
+          label: "What's New",
+          onPress: () => {
+            router.push('/whats-new-modal');
+          },
+        })}
+        {renderRow({
+          icon: 'shield-checkmark',
+          iconColor: '#5856D6',
+          label: 'Privacy Policy',
+          onPress: () => {
+            void handleOpenPrivacyPolicy();
+          },
+        })}
+        {renderRow({
           icon: 'leaf',
           iconColor: '#34C759',
           label: 'App Version',
-          value: '1.0.1',
+          value: appVersionLabel,
           isLast: true,
         })}
       </View>
 
-      <View style={{ height: 40 }} />
+
+
+        <View style={{ height: settingsFooterSpacerHeight }} />
+
+      {/* APP GUIDE MODAL */}
+      <Modal visible={infoModalVisible} animationType="slide" presentationStyle={settingsModalPresentationStyle} statusBarTranslucent={Platform.OS === 'android'}>
+        <View style={[styles.modalContainer, { backgroundColor: colors.bg, paddingTop: androidModalTopInset }]}> 
+          <View style={[styles.modalHeader, { backgroundColor: colors.card }]}> 
+            <TouchableOpacity onPress={() => setInfoModalVisible(false)}>
+              <Text style={[styles.modalCancel, { color: colors.tint }]}>Close</Text>
+            </TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>App Guide</Text>
+            <View style={{ width: 60 }} />
+          </View>
+
+          <View style={styles.infoTabScrollerWrap}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.infoTabRow}
+              style={styles.infoTabScroller}
+              nestedScrollEnabled
+              onLayout={(event) => setInfoTabViewportWidth(event.nativeEvent.layout.width)}
+              onContentSizeChange={(width) => setInfoTabContentWidth(width)}
+              onScroll={(event) => setInfoTabScrollX(event.nativeEvent.contentOffset.x)}
+              scrollEventThrottle={16}
+            >
+              {APP_GUIDE_TOPICS.map((topic) => (
+                <TouchableOpacity
+                  key={topic.key}
+                  style={[
+                    styles.infoTabButton,
+                    { backgroundColor: colors.card, borderColor: colors.separator },
+                    infoTab === topic.key && { backgroundColor: colors.tint, borderColor: colors.tint },
+                  ]}
+                  onPress={() => setInfoTab(topic.key)}
+                >
+                  <Text
+                    style={[
+                      styles.infoTabText,
+                      { color: infoTab === topic.key ? '#FFFFFF' : colors.text },
+                    ]}
+                  >
+                    {topic.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                styles.infoTabArrow,
+                styles.infoTabArrowLeft,
+                { backgroundColor: colors.card, opacity: infoTabLeftArrowOpacity },
+              ]}
+            >
+              <Ionicons name="chevron-back" size={16} color="#FFFFFF" />
+            </Animated.View>
+
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                styles.infoTabArrow,
+                styles.infoTabArrowRight,
+                { backgroundColor: colors.card, opacity: infoTabRightArrowOpacity },
+              ]}
+            >
+              <Ionicons name="chevron-forward" size={16} color="#FFFFFF" />
+            </Animated.View>
+          </View>
+
+          <ScrollView
+            style={styles.infoContent}
+            contentContainerStyle={[styles.infoContentContainer, { paddingBottom: modalBottomPadding }]}
+            showsVerticalScrollIndicator={false}
+            nestedScrollEnabled
+          >
+            <View style={[styles.infoIntroCard, { backgroundColor: colors.card, borderColor: colors.separator }]}> 
+              <Text style={[styles.infoTitle, { color: colors.text }]}>{activeGuideTopic.title}</Text>
+              <Text style={[styles.infoIntroText, { color: colors.secondaryText }]}>{activeGuideTopic.intro}</Text>
+            </View>
+
+            {activeGuideTopic.sections.map((section) => (
+              <View key={section.title} style={[styles.infoSectionCard, { backgroundColor: colors.card, borderColor: colors.separator }]}> 
+                <Text style={[styles.infoSectionTitle, { color: colors.text }]}>{section.title}</Text>
+                {section.items.map((item) => (
+                  <View key={item} style={styles.infoBulletRow}>
+                    <Ionicons name="checkmark-circle" size={18} color={colors.tint} style={styles.infoBulletIcon} />
+                    <Text style={[styles.infoBulletText, { color: colors.text }]}>{item}</Text>
+                  </View>
+                ))}
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      </Modal>
+
+      {/* PRIVACY BROWSER PICKER */}
+      <Modal
+        visible={privacyBrowserModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPrivacyBrowserModalVisible(false)}
+      >
+        <ScrollView
+          style={styles.browserPickerOverlay}
+          contentContainerStyle={styles.browserPickerOverlayContent}
+          showsVerticalScrollIndicator={false}
+          bounces={false}
+          nestedScrollEnabled
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={[styles.browserPickerBox, { backgroundColor: colors.card }]}> 
+            <Text style={[styles.browserPickerTitle, { color: colors.text }]}>Open Privacy Policy</Text>
+            <Text style={[styles.browserPickerMessage, { color: colors.secondaryText }]}>Choose where you want to open the privacy page.</Text>
+
+            <TouchableOpacity
+              style={[styles.browserOptionRow, { borderBottomColor: colors.separator }]}
+              onPress={() => {
+                void openPrivacyPolicyInBrowser('default');
+              }}
+            >
+              <View style={[styles.browserOptionIcon, { backgroundColor: '#0A84FF' }]}> 
+                <Ionicons name="globe-outline" size={18} color="#FFFFFF" />
+              </View>
+              <View style={styles.browserOptionTextWrap}>
+                <Text style={[styles.browserOptionTitle, { color: colors.text }]}>{defaultBrowserLabel}</Text>
+                <Text style={[styles.browserOptionDescription, { color: colors.secondaryText }]}>Uses your phone&apos;s normal web browser choice.</Text>
+              </View>
+            </TouchableOpacity>
+
+            {showChromeBrowserOption && (
+              <TouchableOpacity
+                style={[styles.browserOptionRow, { borderBottomColor: colors.separator }]}
+                onPress={() => {
+                  void openPrivacyPolicyInBrowser('chrome');
+                }}
+              >
+                <View style={[styles.browserOptionIcon, { backgroundColor: '#34A853' }]}> 
+                  <Ionicons name="logo-chrome" size={18} color="#FFFFFF" />
+                </View>
+                <View style={styles.browserOptionTextWrap}>
+                  <Text style={[styles.browserOptionTitle, { color: colors.text }]}>Chrome</Text>
+                  <Text style={[styles.browserOptionDescription, { color: colors.secondaryText }]}>Open directly in Chrome when it is available.</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={[styles.browserOptionRow, { borderBottomColor: colors.separator }]}
+              onPress={() => {
+                void openPrivacyPolicyInBrowser('inApp');
+              }}
+            >
+              <View style={[styles.browserOptionIcon, { backgroundColor: '#FF9500' }]}> 
+                <Ionicons name="open-outline" size={18} color="#FFFFFF" />
+              </View>
+              <View style={styles.browserOptionTextWrap}>
+                <Text style={[styles.browserOptionTitle, { color: colors.text }]}>In-App Browser</Text>
+                <Text style={[styles.browserOptionDescription, { color: colors.secondaryText }]}>Stay in the app while reading the privacy page.</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.browserCancelButton} onPress={() => setPrivacyBrowserModalVisible(false)}>
+              <Text style={[styles.browserCancelText, { color: colors.tint }]}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </Modal>
 
       {/* TIMEZONE MODAL */}
       <Modal visible={tzModalVisible} animationType="slide" presentationStyle={settingsModalPresentationStyle} statusBarTranslucent={Platform.OS === 'android'}>
@@ -812,6 +1450,9 @@ export default function SettingsScreen() {
           <FlatList
             data={filteredTimezones}
             keyExtractor={(item) => item}
+            nestedScrollEnabled
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ paddingBottom: modalBottomPadding }}
             renderItem={({ item }) => (
               <TouchableOpacity
                 style={[
@@ -842,25 +1483,31 @@ export default function SettingsScreen() {
             <Text style={[styles.modalTitle, { color: colors.text }]}>Default Watering Interval</Text>
             <View style={{ width: 60 }} />
           </View>
-          {INTERVALS.map((interval, index) => (
-            <TouchableOpacity
-              key={interval}
-              style={[
-                styles.tzRow,
-                { backgroundColor: colors.card, borderBottomColor: colors.separator },
-                index === INTERVALS.length - 1 && { borderBottomWidth: 0 },
-              ]}
-              onPress={() => {
-                setDefaultCheckInterval(interval);
-                setIntervalModalVisible(false);
-              }}
-            >
-              <Text style={[styles.tzText, { color: colors.text }]}>{interval}</Text>
-              {interval === defaultCheckInterval && (
-                <Ionicons name="checkmark" size={20} color={colors.tint} />
-              )}
-            </TouchableOpacity>
-          ))}
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            nestedScrollEnabled
+            contentContainerStyle={{ paddingBottom: modalBottomPadding }}
+          >
+            {INTERVALS.map((interval, index) => (
+              <TouchableOpacity
+                key={interval}
+                style={[
+                  styles.tzRow,
+                  { backgroundColor: colors.card, borderBottomColor: colors.separator },
+                  index === INTERVALS.length - 1 && { borderBottomWidth: 0 },
+                ]}
+                onPress={() => {
+                  setDefaultCheckInterval(interval);
+                  setIntervalModalVisible(false);
+                }}
+              >
+                <Text style={[styles.tzText, { color: colors.text }]}>{interval}</Text>
+                {interval === defaultCheckInterval && (
+                  <Ionicons name="checkmark" size={20} color={colors.tint} />
+                )}
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
         </View>
       </Modal>
 
@@ -874,31 +1521,37 @@ export default function SettingsScreen() {
             <Text style={[styles.modalTitle, { color: colors.text }]}>Color Theme</Text>
             <View style={{ width: 60 }} />
           </View>
-          {(Object.keys(COLOR_THEMES) as ColorThemeName[]).map((key, index, arr) => {
-            const theme = COLOR_THEMES[key];
-            return (
-              <TouchableOpacity
-                key={key}
-                style={[
-                  styles.tzRow,
-                  { backgroundColor: colors.card, borderBottomColor: colors.separator },
-                  index === arr.length - 1 && { borderBottomWidth: 0 },
-                ]}
-                onPress={() => {
-                  setColorTheme(key);
-                  setThemeModalVisible(false);
-                }}
-              >
-                <View style={styles.themeRowLeft}>
-                  <View style={[styles.themeCircle, { backgroundColor: theme.primary }]} />
-                  <Text style={[styles.tzText, { color: colors.text }]}>{theme.label}</Text>
-                </View>
-                {key === colorTheme && (
-                  <Ionicons name="checkmark" size={20} color={colors.tint} />
-                )}
-              </TouchableOpacity>
-            );
-          })}
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            nestedScrollEnabled
+            contentContainerStyle={{ paddingBottom: modalBottomPadding }}
+          >
+            {(Object.keys(COLOR_THEMES) as ColorThemeName[]).map((key, index, arr) => {
+              const theme = COLOR_THEMES[key];
+              return (
+                <TouchableOpacity
+                  key={key}
+                  style={[
+                    styles.tzRow,
+                    { backgroundColor: colors.card, borderBottomColor: colors.separator },
+                    index === arr.length - 1 && { borderBottomWidth: 0 },
+                  ]}
+                  onPress={() => {
+                    setColorTheme(key);
+                    setThemeModalVisible(false);
+                  }}
+                >
+                  <View style={styles.themeRowLeft}>
+                    <View style={[styles.themeCircle, { backgroundColor: theme.primary }]} />
+                    <Text style={[styles.tzText, { color: colors.text }]}>{theme.label}</Text>
+                  </View>
+                  {key === colorTheme && (
+                    <Ionicons name="checkmark" size={20} color={colors.tint} />
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
         </View>
       </Modal>
 
@@ -950,7 +1603,7 @@ export default function SettingsScreen() {
           </View>
 
           {colorPickerTab === 'presets' ? (
-            <ScrollView contentContainerStyle={styles.colorGrid}>
+            <ScrollView contentContainerStyle={[styles.colorGrid, { paddingBottom: modalBottomPadding }]} nestedScrollEnabled>
               {MEMBER_COLORS.map((color) => (
                 <TouchableOpacity
                   key={color}
@@ -1013,33 +1666,39 @@ export default function SettingsScreen() {
               ))}
             </ScrollView>
           ) : (
-            <View style={styles.customPickerContainer} {...customTabGestureBlocker.panHandlers}>
-              <SimpleColorPicker
-                value={customPickerColor}
-                onColorChange={setCustomPickerColor}
-              />
+            <ScrollView
+              contentContainerStyle={[styles.customPickerScrollContent, { paddingBottom: modalBottomPadding }]}
+              showsVerticalScrollIndicator={false}
+              nestedScrollEnabled
+            >
+              <View style={styles.customPickerContainer} {...customTabGestureBlocker.panHandlers}>
+                <SimpleColorPicker
+                  value={customPickerColor}
+                  onColorChange={setCustomPickerColor}
+                />
 
-              <View style={[styles.previewCard, { backgroundColor: colors.card }]}>
-                <View style={[styles.previewSwatch, { backgroundColor: customPickerColor }]} />
-                <View style={styles.previewTextCol}>
-                  <Text style={[styles.previewLabel, { color: colors.secondaryText }]}>Selected Color</Text>
-                  <Text style={[styles.previewHex, { color: colors.text }]}>{customPickerColor.toUpperCase()}</Text>
+                <View style={[styles.previewCard, { backgroundColor: colors.card }]}> 
+                  <View style={[styles.previewSwatch, { backgroundColor: customPickerColor }]} />
+                  <View style={styles.previewTextCol}>
+                    <Text style={[styles.previewLabel, { color: colors.secondaryText }]}>Selected Color</Text>
+                    <Text style={[styles.previewHex, { color: colors.text }]}>{customPickerColor.toUpperCase()}</Text>
+                  </View>
                 </View>
-              </View>
 
-              <TouchableOpacity
-                style={[styles.customPickerConfirm, { backgroundColor: colors.tint }]}
-                onPress={() => {
-                  if (user) {
-                    setHouseholdMemberColor(user.uid, customPickerColor);
-                  }
-                  setColorPickerVisible(false);
-                  setColorPickerTab('presets');
-                }}
-              >
-                <Text style={styles.customPickerConfirmText}>Select Color</Text>
-              </TouchableOpacity>
-            </View>
+                <TouchableOpacity
+                  style={[styles.customPickerConfirm, { backgroundColor: colors.tint }]}
+                  onPress={() => {
+                    if (user) {
+                      setHouseholdMemberColor(user.uid, customPickerColor);
+                    }
+                    setColorPickerVisible(false);
+                    setColorPickerTab('presets');
+                  }}
+                >
+                  <Text style={styles.customPickerConfirmText}>Select Color</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
           )}
         </View>
       </Modal>
@@ -1054,41 +1713,47 @@ export default function SettingsScreen() {
             <Text style={[styles.modalTitle, { color: colors.text }]}>Household Members</Text>
             <View style={{ width: 60 }} />
           </View>
-          <View style={styles.membersListContainer}>
-            {householdMembers.map((member, index) => {
-              const isYou = member.uid === user?.uid;
-              const joinDate = member.joinedAt
-                ? new Date(member.joinedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-                : null;
-              return (
-                <View
-                  key={member.uid}
-                  style={[
-                    styles.memberRow,
-                    { backgroundColor: colors.card },
-                    index !== householdMembers.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.separator },
-                  ]}
-                >
-                  <View style={[styles.memberColorDot, { backgroundColor: member.color || '#007AFF' }]} />
-                  <View style={styles.memberInfo}>
-                    <Text style={[styles.memberName, { color: colors.text }]}>
-                      {member.displayName}{isYou ? ' (You)' : ''}
-                    </Text>
-                    {joinDate && (
-                      <Text style={[styles.memberJoinDate, { color: colors.secondaryText }]}>
-                        Joined {joinDate}
+          <ScrollView
+            contentContainerStyle={{ paddingBottom: modalBottomPadding }}
+            showsVerticalScrollIndicator={false}
+            nestedScrollEnabled
+          >
+            <View style={styles.membersListContainer}>
+              {householdMembers.map((member, index) => {
+                const isYou = member.uid === user?.uid;
+                const joinDate = member.joinedAt
+                  ? new Date(member.joinedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+                  : null;
+                return (
+                  <View
+                    key={member.uid}
+                    style={[
+                      styles.memberRow,
+                      { backgroundColor: colors.card },
+                      index !== householdMembers.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.separator },
+                    ]}
+                  >
+                    <View style={[styles.memberColorDot, { backgroundColor: member.color || '#007AFF' }]} />
+                    <View style={styles.memberInfo}>
+                      <Text style={[styles.memberName, { color: colors.text }]}> 
+                        {member.displayName}{isYou ? ' (You)' : ''}
                       </Text>
-                    )}
+                      {joinDate && (
+                        <Text style={[styles.memberJoinDate, { color: colors.secondaryText }]}> 
+                          Joined {joinDate}
+                        </Text>
+                      )}
+                    </View>
                   </View>
-                </View>
-              );
-            })}
-            {householdMembers.length === 0 && (
-              <Text style={[styles.noMembersText, { color: colors.secondaryText }]}>
-                No members found
-              </Text>
-            )}
-          </View>
+                );
+              })}
+              {householdMembers.length === 0 && (
+                <Text style={[styles.noMembersText, { color: colors.secondaryText }]}> 
+                  No members found
+                </Text>
+              )}
+            </View>
+          </ScrollView>
         </View>
       </Modal>
 
@@ -1133,7 +1798,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    paddingTop: 8,
+    paddingTop: 5,
+   
     maxWidth: 600,
     alignSelf: 'center' as const,
     width: '100%' as const,
@@ -1199,6 +1865,93 @@ const styles = StyleSheet.create({
   },
   segmentText: {
     fontSize: 13,
+  },
+  infoTabScroller: {
+    maxHeight: 64,
+  },
+  infoTabScrollerWrap: {
+    position: 'relative',
+  },
+  infoTabRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 10,
+    alignItems: 'center',
+  },
+  infoTabArrow: {
+    position: 'absolute',
+    top: 18,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.12,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  infoTabArrowLeft: {
+    left: 8,
+  },
+  infoTabArrowRight: {
+    right: 8,
+  },
+  infoTabButton: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  infoTabText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  infoContent: {
+    flex: 1,
+  },
+  infoContentContainer: {
+    paddingHorizontal: 16,
+    paddingBottom: 28,
+    gap: 14,
+  },
+  infoIntroCard: {
+    borderWidth: 1,
+    borderRadius: 18,
+    padding: 18,
+  },
+  infoTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  infoIntroText: {
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  infoSectionCard: {
+    borderWidth: 1,
+    borderRadius: 18,
+    padding: 18,
+    gap: 12,
+  },
+  infoSectionTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  infoBulletRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  infoBulletIcon: {
+    marginTop: 2,
+  },
+  infoBulletText: {
+    flex: 1,
+    fontSize: 15,
+    lineHeight: 22,
   },
   modalContainer: {
     flex: 1,
@@ -1309,10 +2062,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   customPickerContainer: {
-    flex: 1,
     alignItems: 'center',
     paddingTop: 30,
     paddingHorizontal: 20,
+  },
+  customPickerScrollContent: {
+    flexGrow: 1,
   },
   previewCard: {
     flexDirection: 'row',
@@ -1400,6 +2155,74 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlign: 'center',
     paddingVertical: 30,
+  },
+  browserPickerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  browserPickerOverlayContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  browserPickerBox: {
+    width: '100%',
+    maxWidth: 380,
+    borderRadius: 20,
+    overflow: 'hidden',
+  },
+  browserPickerTitle: {
+    fontSize: 19,
+    fontWeight: '700',
+    textAlign: 'center',
+    paddingTop: 20,
+    paddingHorizontal: 20,
+  },
+  browserPickerMessage: {
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+    paddingTop: 8,
+    paddingBottom: 12,
+    paddingHorizontal: 20,
+  },
+  browserOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  browserOptionIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  browserOptionTextWrap: {
+    flex: 1,
+  },
+  browserOptionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  browserOptionDescription: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  browserCancelButton: {
+    paddingVertical: 16,
+    alignItems: 'center',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#C6C6C8',
+  },
+  browserCancelText: {
+    fontSize: 17,
+    fontWeight: '600',
   },
   promptOverlay: {
     flex: 1,

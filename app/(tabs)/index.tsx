@@ -1,17 +1,21 @@
 import * as Haptics from "expo-haptics";
+import * as SecureStore from 'expo-secure-store';
+import * as Application from 'expo-application';
+import Constants from 'expo-constants';
 import { useRouter } from "expo-router";
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
-import { StyleSheet, TouchableOpacity, ActivityIndicator, Alert, View, ScrollView, Image, TextInput, InteractionManager, RefreshControl } from "react-native";
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { StyleSheet, TouchableOpacity, ActivityIndicator, Alert, View, ScrollView, Image, TextInput, InteractionManager, RefreshControl, Platform, useWindowDimensions } from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from "expo-linear-gradient";
-import { usePlants } from "@/app/context/PlantContext";
-import { useAuth } from "@/app/context/AuthContext";
+import { usePlants } from '@/contexts/PlantContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { useEffect, useMemo, useRef, useState } from "react";
 import OnboardingWalkthrough from "@/components/onboarding-walkthrough";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { getThemeColors } from "@/constants/theme";
 import { parseCheckIntervalDays } from '@/services/plant-intervals';
+import { getMostRecentWateringEntryOnOrBefore, getWateringEntries } from '@/services/watering-log';
 
 function snapToWaterDay(date: Date, waterDay: number | undefined): Date {
   if (waterDay === undefined) return date;
@@ -37,7 +41,10 @@ export default function HomeScreen() {
   const [locationFilter, setLocationFilter] = useState<string | null>(null);
   const [memberFilter, setMemberFilter] = useState<string | null>(null); // null = All, 'mine' = just me, or a uid
   const [refreshing, setRefreshing] = useState(false);
+  const { height } = useWindowDimensions();
   const hasNavigatedToWelcome = useRef(false);
+  const hasShownWhatsNew = useRef(false);
+  const insets = useSafeAreaInsets();
 
   const colorScheme = useColorScheme();
   const isDark = colorScheme !== 'light';
@@ -49,6 +56,18 @@ export default function HomeScreen() {
   const plantsGridRef = useRef<View>(null);
 
   const showWalkthrough = hasCompletedOnboarding && !hasCompletedWalkthrough;
+  const appVersionTag = useMemo(() => {
+    const version = Application.nativeApplicationVersion || Constants.expoConfig?.version || 'dev';
+    const build =
+      Application.nativeBuildVersion ||
+      (typeof Constants.expoConfig?.ios?.buildNumber === 'string' ? Constants.expoConfig.ios.buildNumber : undefined) ||
+      (typeof Constants.expoConfig?.android?.versionCode === 'number'
+        ? String(Constants.expoConfig.android.versionCode)
+        : undefined) ||
+      '0';
+
+    return `${version}+${build}`;
+  }, []);
 
   const walkthroughSteps = useMemo(() => [
     {
@@ -77,7 +96,7 @@ export default function HomeScreen() {
     },
     {
       title: "You're All Set!",
-      description: "You're ready to start caring for your plants. Add your first one and we'll help you keep it thriving!",
+      description: "You're ready to start caring for your plants. Need help later? Open Settings and tap App Guide for detailed feature tips.",
       icon: '🎉',
       centered: true,
     },
@@ -111,8 +130,10 @@ export default function HomeScreen() {
       const log = plant.wateringLog || [];
       let nextWaterDate: Date;
 
-      if (log.length > 0) {
-        const lastWatered = new Date(log[log.length - 1].date);
+      const latestWatering = getMostRecentWateringEntryOnOrBefore(getWateringEntries(log), now);
+
+      if (latestWatering) {
+        const lastWatered = new Date(latestWatering.date);
         nextWaterDate = new Date(lastWatered);
         nextWaterDate.setDate(nextWaterDate.getDate() + intervalDays);
         nextWaterDate.setHours(0, 0, 0, 0);
@@ -191,8 +212,9 @@ export default function HomeScreen() {
     const log = plant.wateringLog || [];
     const now = new Date();
     now.setHours(0, 0, 0, 0);
-    if (log.length > 0) {
-      const lastWatered = new Date(log[log.length - 1].date);
+    const latestWatering = getMostRecentWateringEntryOnOrBefore(getWateringEntries(log), now);
+    if (latestWatering) {
+      const lastWatered = new Date(latestWatering.date);
       const due = new Date(lastWatered);
       due.setDate(due.getDate() + intervalDays);
       due.setHours(0, 0, 0, 0);
@@ -215,6 +237,31 @@ export default function HomeScreen() {
       return () => handle.cancel();
     }
   }, [isLoading, hasCompletedOnboarding]);
+
+  useEffect(() => {
+    if (isLoading || !hasCompletedOnboarding || showWalkthrough || hasShownWhatsNew.current) {
+      return;
+    }
+
+    hasShownWhatsNew.current = true;
+
+    void (async () => {
+      try {
+        const key = 'whats_new_seen_version';
+        const lastSeen = await SecureStore.getItemAsync(key);
+        if (lastSeen === appVersionTag) {
+          return;
+        }
+
+        await SecureStore.setItemAsync(key, appVersionTag);
+        InteractionManager.runAfterInteractions(() => {
+          router.push('/whats-new-modal');
+        });
+      } catch (error) {
+        console.error('Failed to resolve whats new visibility:', error);
+      }
+    })();
+  }, [appVersionTag, hasCompletedOnboarding, isLoading, router, showWalkthrough]);
 
   const getTimeBasedGreeting = () => {
     const hour = new Date().getHours();
@@ -255,8 +302,16 @@ export default function HomeScreen() {
       
       <ScrollView
         style={styles.scrollContent}
-        contentContainerStyle={styles.scrollContentContainer}
+        contentContainerStyle={[
+          styles.scrollContentContainer,
+          {
+            minHeight: Platform.OS === 'android' ? height + 1 : undefined,
+            paddingBottom: Math.max(insets.bottom + 96, 120),
+          },
+        ]}
         showsVerticalScrollIndicator={false}
+        nestedScrollEnabled
+        keyboardShouldPersistTaps="handled"
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -333,7 +388,7 @@ export default function HomeScreen() {
 
         {/* Location Filter */}
         {locations.length > 1 && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow} contentContainerStyle={styles.filterRowContent}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow} contentContainerStyle={styles.filterRowContent} nestedScrollEnabled>
             <TouchableOpacity
               style={[styles.filterChip, !locationFilter && { backgroundColor: theme.accent }]}
               onPress={() => setLocationFilter(null)}
@@ -351,10 +406,9 @@ export default function HomeScreen() {
             ))}
           </ScrollView>
         )}
-
         {/* Member Filter (household mode only) */}
         {isHouseholdActive && householdMembers.length > 1 && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow} contentContainerStyle={styles.filterRowContent}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow} contentContainerStyle={styles.filterRowContent} nestedScrollEnabled>
             <TouchableOpacity
               style={[styles.filterChip, { backgroundColor: theme.cardBg }, !memberFilter && { backgroundColor: theme.accent }]}
               onPress={() => setMemberFilter(null)}

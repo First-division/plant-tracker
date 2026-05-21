@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -7,46 +7,50 @@ import {
   Image,
   Alert,
   Platform,
+  TextInput,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { usePlants } from '@/app/context/PlantContext';
+import { usePlants } from '@/contexts/PlantContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { parseCheckIntervalDays } from '@/services/plant-intervals';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { getThemeColors } from '@/constants/theme';
+import { getDaysUntilNextWater, getNextWaterDate } from '@/services/plant-schedule';
+import { getMostRecentWateringEntryForDay, getMostRecentWateringEntryOnOrBefore, getSortedWateringLog, getWateringEntries } from '@/services/watering-log';
 
 export default function PlantDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { plants, waterPlant, unwaterPlant, clearWateringHistory, removePlant } = usePlants();
+  const { plants, waterPlant, addPlantHistoryEntry, unwaterPlant, clearWateringHistory, removePlant, colorTheme } = usePlants();
+  const [newHistoryAction, setNewHistoryAction] = useState('');
+  const [isSavingHistory, setIsSavingHistory] = useState(false);
+  const HISTORY_COLORS = ['#4CD964', '#0A84FF', '#FF9F0A', '#AF52DE', '#FF375F', '#30B0C7'];
+  const [selectedHistoryColor, setSelectedHistoryColor] = useState(HISTORY_COLORS[0]);
   const insets = useSafeAreaInsets();
+  const colorScheme = useColorScheme();
+  const isDark = colorScheme !== 'light';
+  const theme = getThemeColors(colorTheme, isDark);
+  const surfaceBorderColor = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17,24,28,0.08)';
+  const surfaceMutedColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.72)';
+  const placeholderColor = isDark ? 'rgba(255,255,255,0.08)' : theme.primaryLight;
+  const destructiveBackground = isDark ? 'rgba(255,59,48,0.16)' : 'rgba(255,59,48,0.10)';
 
   const plant = plants.find((p) => p.id === id);
 
   const stats = useMemo(() => {
     if (!plant) return null;
-    const log = plant.wateringLog || [];
-    const totalWaterings = log.length;
-    const lastWatered = log.length > 0 ? new Date(log[log.length - 1].date) : null;
+    const allHistory = plant.wateringLog || [];
+    const wateringOnlyLog = getWateringEntries(allHistory);
+    const totalHistoryEntries = allHistory.length;
+    const latestWatering = getMostRecentWateringEntryOnOrBefore(wateringOnlyLog, new Date());
+    const lastWatered = latestWatering ? new Date(latestWatering.date) : null;
     const daysSinceWatered = lastWatered
       ? Math.floor((Date.now() - lastWatered.getTime()) / (1000 * 60 * 60 * 24))
       : null;
-
-    const intervalDays = parseCheckIntervalDays(plant.checkInterval);
-    let nextWaterDate: Date;
-    if (lastWatered) {
-      nextWaterDate = new Date(lastWatered);
-      nextWaterDate.setDate(nextWaterDate.getDate() + intervalDays);
-    } else {
-      const start = new Date(plant.birthday);
-      const now = new Date();
-      const diffDays = Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-      const nextMultiple = diffDays <= 0 ? 0 : Math.ceil(diffDays / intervalDays);
-      nextWaterDate = new Date(start);
-      nextWaterDate.setDate(nextWaterDate.getDate() + nextMultiple * intervalDays);
-    }
-    const daysUntilNext = Math.max(0, Math.ceil((nextWaterDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+    const nextWaterDate = getNextWaterDate(plant, new Date());
+    const daysUntilNext = getDaysUntilNextWater(plant, new Date());
 
     const birthdayDate = new Date(plant.birthday);
     const ageMs = Date.now() - birthdayDate.getTime();
@@ -54,30 +58,26 @@ export default function PlantDetailScreen() {
     const ageYears = Math.floor(ageDays / 365);
     const ageMonths = Math.floor((ageDays % 365) / 30);
 
-    return { totalWaterings, lastWatered, daysSinceWatered, daysUntilNext, ageYears, ageMonths, ageDays };
+    return { totalHistoryEntries, lastWatered, nextWaterDate, daysSinceWatered, daysUntilNext, ageYears, ageMonths, ageDays };
   }, [plant]);
 
   if (!plant || !stats) {
     return (
-      <ThemedView style={styles.container}>
-        <ThemedText style={styles.errorText}>Plant not found</ThemedText>
+      <ThemedView style={[styles.container, { backgroundColor: theme.screenBg }]}>
+        <ThemedText style={[styles.errorText, { color: theme.text }]}>Plant not found</ThemedText>
       </ThemedView>
     );
   }
 
-  // Check if the plant was watered today (for toggle behavior)
-  const todayStr = new Date().toISOString().split('T')[0];
-  const lastEntry = plant.wateringLog?.length ? plant.wateringLog[plant.wateringLog.length - 1] : null;
-  const wateredToday = lastEntry ? lastEntry.date.startsWith(todayStr) : false;
+  const todaysEntry = getMostRecentWateringEntryForDay(getWateringEntries(plant.wateringLog || []), new Date());
+  const wateredToday = !!todaysEntry;
 
   const handleWater = async () => {
     try {
-      if (wateredToday && lastEntry) {
-        // Unwater — remove today's entry
+      if (wateredToday && todaysEntry) {
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        await unwaterPlant(plant.id, lastEntry.date);
+        await unwaterPlant(plant.id, todaysEntry.date, true);
       } else {
-        // Water
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         await waterPlant(plant.id);
       }
@@ -89,6 +89,24 @@ export default function PlantDetailScreen() {
   const handleEdit = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     router.push({ pathname: '/add-plant-modal', params: { editId: plant.id } });
+  };
+
+  const handleAddHistory = async () => {
+    const action = newHistoryAction.trim();
+    if (!action || isSavingHistory) {
+      return;
+    }
+
+    try {
+      setIsSavingHistory(true);
+      await addPlantHistoryEntry(plant.id, action, undefined, selectedHistoryColor);
+      setNewHistoryAction('');
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch {
+      Alert.alert('Error', 'Failed to add history entry');
+    } finally {
+      setIsSavingHistory(false);
+    }
   };
 
   const handleDelete = () => {
@@ -116,10 +134,10 @@ export default function PlantDetailScreen() {
   const formatTime = (date: Date) =>
     date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
-  const wateringLog = [...(plant.wateringLog || [])].reverse();
+  const historyLog = getSortedWateringLog(plant.wateringLog || []).reverse();
 
   return (
-    <ThemedView style={styles.container}>
+    <ThemedView style={[styles.container, { backgroundColor: theme.screenBg }]}>
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
@@ -128,9 +146,31 @@ export default function PlantDetailScreen() {
         {/* Hero Photo */}
         <View style={styles.heroMediaFrame}>
           {plant.photoUri ? (
-            <Image source={{ uri: plant.photoUri }} style={[styles.heroImage, styles.heroMedia]} />
+            <Image
+              source={{ uri: plant.photoUri }}
+              style={[
+                styles.heroImage,
+                styles.heroMedia,
+                {
+                  backgroundColor: surfaceMutedColor,
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: surfaceBorderColor,
+                },
+              ]}
+            />
           ) : (
-            <View style={[styles.heroPlaceholder, styles.heroMedia, Platform.OS === 'android' && styles.heroPlaceholderAndroid]}>
+            <View
+              style={[
+                styles.heroPlaceholder,
+                styles.heroMedia,
+                {
+                  backgroundColor: placeholderColor,
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: surfaceBorderColor,
+                },
+                Platform.OS === 'android' && [styles.heroPlaceholderAndroid, { borderColor: surfaceBorderColor }],
+              ]}
+            >
               <ThemedText style={styles.heroEmoji}>🌱</ThemedText>
             </View>
           )}
@@ -138,55 +178,55 @@ export default function PlantDetailScreen() {
 
         {/* Plant Name & Location */}
         <View style={styles.headerSection}>
-          <ThemedText style={styles.plantName} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{plant.name}</ThemedText>
-          <ThemedText style={styles.plantLocation}>📍 {plant.location}</ThemedText>
+          <ThemedText style={[styles.plantName, { color: theme.text }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{plant.name}</ThemedText>
+          <ThemedText style={[styles.plantLocation, { color: theme.secondaryText }]}>📍 {plant.location}</ThemedText>
         </View>
 
         {/* Water Now Button */}
         <TouchableOpacity
-          style={[styles.waterButton, wateredToday && styles.waterButtonDone]}
+          style={[styles.waterButton, { backgroundColor: wateredToday ? theme.accent : theme.primary }]}
           onPress={handleWater}
           activeOpacity={0.8}
         >
           <ThemedText style={styles.waterButtonText}>
-            {wateredToday ? '✅ Watered Today' : '💧 Water Now'}
+            {wateredToday ? '✓' : 'Water'}
           </ThemedText>
         </TouchableOpacity>
 
         {/* Stats Row */}
         <View style={styles.statsRow}>
-          <View style={styles.statCard}>
-            <ThemedText style={styles.statValue}>{stats.totalWaterings}</ThemedText>
-            <ThemedText style={styles.statLabel}>Waterings</ThemedText>
+          <View style={[styles.statCard, { backgroundColor: theme.cardBg, borderWidth: StyleSheet.hairlineWidth, borderColor: surfaceBorderColor }]}>
+            <ThemedText style={[styles.statValue, { color: theme.text }]}>{stats.totalHistoryEntries}</ThemedText>
+            <ThemedText style={[styles.statLabel, { color: theme.secondaryText }]}>History</ThemedText>
           </View>
-          <View style={styles.statCard}>
-            <ThemedText style={styles.statValue}>
+          <View style={[styles.statCard, { backgroundColor: theme.cardBg, borderWidth: StyleSheet.hairlineWidth, borderColor: surfaceBorderColor }]}>
+            <ThemedText style={[styles.statValue, { color: theme.text }]}>
               {stats.daysSinceWatered !== null ? `${stats.daysSinceWatered}d` : '—'}
             </ThemedText>
-            <ThemedText style={styles.statLabel}>Since Last</ThemedText>
+            <ThemedText style={[styles.statLabel, { color: theme.secondaryText }]}>Since Last</ThemedText>
           </View>
-          <View style={styles.statCard}>
-            <ThemedText style={[styles.statValue, stats.daysUntilNext === 0 && { color: '#FF3B30' }]}>
-              {stats.daysUntilNext === 0 ? 'Today' : `${stats.daysUntilNext}d`}
+          <View style={[styles.statCard, { backgroundColor: theme.cardBg, borderWidth: StyleSheet.hairlineWidth, borderColor: surfaceBorderColor }]}>
+            <ThemedText style={[styles.statValue, { color: stats.daysUntilNext === 0 ? '#FF3B30' : theme.text }]}>
+              {stats.daysUntilNext === null ? '—' : stats.daysUntilNext === 0 ? 'Today' : `${stats.daysUntilNext}d`}
             </ThemedText>
-            <ThemedText style={styles.statLabel}>Next Water</ThemedText>
+            <ThemedText style={[styles.statLabel, { color: theme.secondaryText }]}>Next Water</ThemedText>
           </View>
         </View>
 
         {/* Details Section */}
-        <View style={styles.detailsCard}>
-          <ThemedText style={styles.sectionTitle}>Details</ThemedText>
-          <View style={styles.detailRow}>
-            <ThemedText style={styles.detailLabel}>Watering Interval</ThemedText>
-            <ThemedText style={styles.detailValue}>Every {plant.checkInterval}</ThemedText>
+        <View style={[styles.detailsCard, { backgroundColor: theme.cardBg, borderWidth: StyleSheet.hairlineWidth, borderColor: surfaceBorderColor }]}>
+          <ThemedText style={[styles.sectionTitle, { color: theme.text }]}>Details</ThemedText>
+          <View style={[styles.detailRow, { borderBottomColor: surfaceBorderColor }]}>
+            <ThemedText style={[styles.detailLabel, { color: theme.secondaryText }]}>Watering Interval</ThemedText>
+            <ThemedText style={[styles.detailValue, { color: theme.text }]}>Every {plant.checkInterval}</ThemedText>
           </View>
-          <View style={styles.detailRow}>
-            <ThemedText style={styles.detailLabel}>Birthday</ThemedText>
-            <ThemedText style={styles.detailValue}>{formatDate(new Date(plant.birthday))}</ThemedText>
+          <View style={[styles.detailRow, { borderBottomColor: surfaceBorderColor }]}>
+            <ThemedText style={[styles.detailLabel, { color: theme.secondaryText }]}>Birthday</ThemedText>
+            <ThemedText style={[styles.detailValue, { color: theme.text }]}>{formatDate(new Date(plant.birthday))}</ThemedText>
           </View>
-          <View style={styles.detailRow}>
-            <ThemedText style={styles.detailLabel}>Age</ThemedText>
-            <ThemedText style={styles.detailValue}>
+          <View style={[styles.detailRow, { borderBottomColor: surfaceBorderColor }]}>
+            <ThemedText style={[styles.detailLabel, { color: theme.secondaryText }]}>Age</ThemedText>
+            <ThemedText style={[styles.detailValue, { color: theme.text }]}>
               {stats.ageYears > 0
                 ? `${stats.ageYears}y ${stats.ageMonths}m`
                 : stats.ageMonths > 0
@@ -195,22 +235,22 @@ export default function PlantDetailScreen() {
             </ThemedText>
           </View>
           <View style={[styles.detailRow, { borderBottomWidth: 0 }]}>
-            <ThemedText style={styles.detailLabel}>Gender</ThemedText>
-            <ThemedText style={styles.detailValue}>{plant.gender}</ThemedText>
+            <ThemedText style={[styles.detailLabel, { color: theme.secondaryText }]}>Gender</ThemedText>
+            <ThemedText style={[styles.detailValue, { color: theme.text }]}>{plant.gender}</ThemedText>
           </View>
         </View>
 
-        {/* Watering History */}
-        <View style={styles.historyCard}>
+        {/* Plant History */}
+        <View style={[styles.historyCard, { backgroundColor: theme.cardBg, borderWidth: StyleSheet.hairlineWidth, borderColor: surfaceBorderColor }]}>
           <View style={styles.historyHeader}>
-            <ThemedText style={styles.sectionTitle}>Watering History</ThemedText>
-            {wateringLog.length > 0 && (
+            <ThemedText style={[styles.sectionTitle, { color: theme.text }]}>History</ThemedText>
+            {historyLog.length > 0 && (
               <TouchableOpacity
-                style={styles.clearAllButton}
+                style={[styles.clearAllButton, { backgroundColor: destructiveBackground }]}
                 onPress={() => {
                   Alert.alert(
                     'Clear All History',
-                    `Are you sure you want to delete all ${wateringLog.length} watering entries for ${plant.name}? This cannot be undone.`,
+                    `Are you sure you want to delete all ${historyLog.length} history entries for ${plant.name}? This cannot be undone.`,
                     [
                       { text: 'Cancel', style: 'cancel' },
                       {
@@ -230,24 +270,86 @@ export default function PlantDetailScreen() {
                 }}
                 activeOpacity={0.7}
               >
-                <ThemedText style={styles.clearAllX}>✕</ThemedText>
+                <ThemedText style={[styles.clearAllX, { color: '#FF3B30' }]}>✕</ThemedText>
               </TouchableOpacity>
             )}
           </View>
-          {wateringLog.length === 0 ? (
-            <ThemedText style={styles.emptyHistory}>No watering recorded yet</ThemedText>
+
+          <View style={styles.historyAddRow}>
+            <TextInput
+              style={[
+                styles.historyInput,
+                {
+                  backgroundColor: surfaceMutedColor,
+                  color: theme.text,
+                  borderColor: surfaceBorderColor,
+                },
+              ]}
+              placeholder="Add action (trim, moved, fertilized...)"
+              placeholderTextColor={theme.secondaryText}
+              value={newHistoryAction}
+              onChangeText={setNewHistoryAction}
+              returnKeyType="done"
+              onSubmitEditing={handleAddHistory}
+              editable={!isSavingHistory}
+            />
+            <TouchableOpacity
+              style={[
+                styles.historyAddButton,
+                {
+                  backgroundColor: newHistoryAction.trim() ? theme.primary : surfaceMutedColor,
+                  borderColor: surfaceBorderColor,
+                },
+              ]}
+              onPress={handleAddHistory}
+              disabled={!newHistoryAction.trim() || isSavingHistory}
+              activeOpacity={0.8}
+            >
+              <ThemedText style={[styles.historyAddButtonText, { color: newHistoryAction.trim() ? '#FFFFFF' : theme.secondaryText }]}>Add</ThemedText>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.historyColorRow}>
+            {HISTORY_COLORS.map((color) => {
+              const isSelected = color === selectedHistoryColor;
+              return (
+                <TouchableOpacity
+                  key={color}
+                  style={[
+                    styles.historyColorSwatch,
+                    {
+                      backgroundColor: color,
+                      borderColor: isSelected ? theme.text : surfaceBorderColor,
+                      borderWidth: isSelected ? 2 : 1,
+                    },
+                  ]}
+                  onPress={() => setSelectedHistoryColor(color)}
+                  activeOpacity={0.85}
+                />
+              );
+            })}
+          </View>
+
+          {historyLog.length === 0 ? (
+            <ThemedText style={[styles.emptyHistory, { color: theme.secondaryText }]}>No history recorded yet</ThemedText>
           ) : (
-            wateringLog.slice(0, 20).map((entry, index) => {
+            historyLog.slice(0, 20).map((entry, index) => {
               const entryDate = new Date(entry.date);
+              const actionLabel = entry.action?.trim() || 'Watered';
+              const normalizedAction = actionLabel.toLowerCase();
+              const isWaterAction = normalizedAction === 'water' || normalizedAction === 'watered';
               return (
                 <TouchableOpacity
                   key={`${entry.date}-${index}`}
-                  style={[styles.historyRow, index > 0 && styles.historyRowBorder]}
+                  style={[
+                    styles.historyRow,
+                    index > 0 && [styles.historyRowBorder, { borderTopColor: surfaceBorderColor }],
+                  ]}
                   onLongPress={() => {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
                     Alert.alert(
                       'Delete Entry',
-                      `Remove watering on ${formatDate(entryDate)} at ${formatTime(entryDate)}?`,
+                      `Remove "${actionLabel}" on ${formatDate(entryDate)} at ${formatTime(entryDate)}?`,
                       [
                         { text: 'Cancel', style: 'cancel' },
                         {
@@ -268,30 +370,31 @@ export default function PlantDetailScreen() {
                   activeOpacity={0.8}
                   delayLongPress={400}
                 >
-                  <View style={styles.historyDot} />
+                  <View style={[styles.historyDot, { backgroundColor: entry.dotColor || theme.primary }]} />
                   <View style={styles.historyInfo}>
-                    <ThemedText style={styles.historyDate}>{formatDate(entryDate)}</ThemedText>
-                    <ThemedText style={styles.historyTime}>{formatTime(entryDate)}</ThemedText>
-                    {entry.note && <ThemedText style={styles.historyNote}>{entry.note}</ThemedText>}
+                    <ThemedText style={[styles.historyAction, { color: theme.text }]}>{actionLabel}</ThemedText>
+                    <ThemedText style={[styles.historyDate, { color: theme.text }]}>{formatDate(entryDate)}</ThemedText>
+                    <ThemedText style={[styles.historyTime, { color: theme.secondaryText }]}>{formatTime(entryDate)}</ThemedText>
+                    {entry.note && <ThemedText style={[styles.historyNote, { color: theme.secondaryText }]}>{entry.note}</ThemedText>}
                   </View>
-                  <ThemedText style={styles.historyIcon}>💧</ThemedText>
+                  <ThemedText style={styles.historyIcon}>{isWaterAction ? '💧' : '📝'}</ThemedText>
                 </TouchableOpacity>
               );
             })
           )}
-          {wateringLog.length > 20 && (
-            <ThemedText style={styles.moreHistory}>
-              +{wateringLog.length - 20} more entries
+          {historyLog.length > 20 && (
+            <ThemedText style={[styles.moreHistory, { color: theme.secondaryText }]}>
+              +{historyLog.length - 20} more entries
             </ThemedText>
           )}
         </View>
 
         {/* Action Buttons */}
         <View style={styles.actionRow}>
-          <TouchableOpacity style={styles.editButton} onPress={handleEdit} activeOpacity={0.7}>
-            <ThemedText style={styles.editButtonText}>✏️ Edit</ThemedText>
+          <TouchableOpacity style={[styles.editButton, { backgroundColor: theme.primaryLight, borderWidth: StyleSheet.hairlineWidth, borderColor: surfaceBorderColor }]} onPress={handleEdit} activeOpacity={0.7}>
+            <ThemedText style={[styles.editButtonText, { color: theme.primary }]}>✏️ Edit</ThemedText>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.deleteButton} onPress={handleDelete} activeOpacity={0.7}>
+          <TouchableOpacity style={[styles.deleteButton, { backgroundColor: destructiveBackground, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,59,48,0.18)' }]} onPress={handleDelete} activeOpacity={0.7}>
             <ThemedText style={styles.deleteButtonText}>🗑️ Delete</ThemedText>
           </TouchableOpacity>
         </View>
@@ -367,6 +470,7 @@ const styles = StyleSheet.create({
     fontSize: 32,
     fontWeight: '700',
     color: '#FFF',
+    paddingTop: 50,
   },
   plantLocation: {
     fontSize: 16,
@@ -454,6 +558,40 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
+  historyAddRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 12,
+  },
+  historyColorRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 14,
+  },
+  historyColorSwatch: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+  },
+  historyInput: {
+    flex: 1,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+  },
+  historyAddButton: {
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  historyAddButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
   clearAllButton: {
     width: 26,
     height: 26,
@@ -493,10 +631,15 @@ const styles = StyleSheet.create({
   historyInfo: {
     flex: 1,
   },
-  historyDate: {
+  historyAction: {
     fontSize: 15,
     color: '#FFF',
-    fontWeight: '500',
+    fontWeight: '600',
+  },
+  historyDate: {
+    fontSize: 13,
+    color: '#FFF',
+    marginTop: 2,
   },
   historyTime: {
     fontSize: 13,
