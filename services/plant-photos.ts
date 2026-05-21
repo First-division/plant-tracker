@@ -9,6 +9,33 @@ const PLANT_PHOTOS_DIR = FileSystem.documentDirectory
   ? `${FileSystem.documentDirectory}plant-photos/`
   : null;
 
+function extractManagedPhotoFileName(photoUri?: string): string | null {
+  if (!photoUri) {
+    return null;
+  }
+
+  const normalizedUri = photoUri.trim();
+  if (!normalizedUri) {
+    return null;
+  }
+
+  const plantPhotosIndex = normalizedUri.lastIndexOf('/plant-photos/');
+  if (plantPhotosIndex === -1) {
+    return null;
+  }
+
+  const fileName = normalizedUri.slice(plantPhotosIndex + '/plant-photos/'.length);
+  return fileName || null;
+}
+
+function buildManagedPhotoUriFromFileName(fileName: string): string | null {
+  if (!PLANT_PHOTOS_DIR) {
+    return null;
+  }
+
+  return `${PLANT_PHOTOS_DIR}${fileName}`;
+}
+
 function isRemotePhotoUri(photoUri: string): boolean {
   return /^https?:\/\//i.test(photoUri) || photoUri.startsWith('data:');
 }
@@ -37,7 +64,7 @@ async function ensurePlantPhotoDirectory(): Promise<void> {
 }
 
 export function isManagedPlantPhotoUri(photoUri?: string): boolean {
-  return !!photoUri && !!PLANT_PHOTOS_DIR && photoUri.startsWith(PLANT_PHOTOS_DIR);
+  return !!extractManagedPhotoFileName(photoUri) && !!PLANT_PHOTOS_DIR;
 }
 
 export async function persistPlantPhoto(photoUri: string): Promise<string> {
@@ -73,8 +100,18 @@ export async function resolvePlantPhotoUri(photoUri?: string): Promise<string | 
   }
 
   if (isManagedPlantPhotoUri(normalizedPhotoUri)) {
-    const managedInfo = await FileSystem.getInfoAsync(normalizedPhotoUri);
-    return managedInfo.exists ? normalizedPhotoUri : undefined;
+    const managedFileName = extractManagedPhotoFileName(normalizedPhotoUri);
+    const currentManagedUri = managedFileName ? buildManagedPhotoUriFromFileName(managedFileName) : null;
+
+    if (currentManagedUri) {
+      const managedInfo = await FileSystem.getInfoAsync(currentManagedUri);
+      if (managedInfo.exists) {
+        return currentManagedUri;
+      }
+    }
+
+    const legacyManagedInfo = await FileSystem.getInfoAsync(normalizedPhotoUri);
+    return legacyManagedInfo.exists ? normalizedPhotoUri : undefined;
   }
 
   try {
@@ -125,9 +162,12 @@ export async function deleteStoredPlantPhoto(photoUri?: string): Promise<void> {
   }
 
   try {
-    const info = await FileSystem.getInfoAsync(photoUri);
+    const managedFileName = extractManagedPhotoFileName(photoUri);
+    const currentManagedUri = managedFileName ? buildManagedPhotoUriFromFileName(managedFileName) : null;
+    const deleteUri = currentManagedUri || photoUri;
+    const info = await FileSystem.getInfoAsync(deleteUri);
     if (info.exists) {
-      await FileSystem.deleteAsync(photoUri, { idempotent: true });
+      await FileSystem.deleteAsync(deleteUri, { idempotent: true });
     }
   } catch (error) {
     console.warn('Error deleting stored plant photo:', error);

@@ -6,7 +6,7 @@
     "start": "expo start",
     "reset-project": "node ./scripts/reset-project.js",
     "generate:whats-new": "node ./scripts/generate-whats-new.js",
-    "release:testflight": "npm run generate:whats-new && eas build -p ios --profile production && eas submit -p ios --latest",
+    "release:testflight": "npm run generate:whats-new && eas build -p ios --profile production --auto-submit",
     "release:testflight:build": "npm run generate:whats-new && eas build -p ios --profile production",
     "release:testflight:submit": "eas submit -p ios --latest",
     "android": "expo run:android",

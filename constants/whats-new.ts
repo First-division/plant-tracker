@@ -8,19 +8,21 @@ export type WhatsNewContent = {
 };
 
 export const WHATS_NEW_CONTENT: WhatsNewContent = {
-  releaseLabel: '1.0.1',
+  releaseLabel: '1.0.5',
   title: 'What\'s New',
-  subtitle: 'Highlights from version 1.0.1.',
+  subtitle: 'Highlights from version 1.0.5.',
   features: [
-    'New color theme support in light mode, so theme choices now carry through more of the app.',
-    'New Pink theme added.',
-    'More flexible watering reminder intervals with years, months, and days.',
-    'Default watering interval settings now apply when creating a new plant.',
-    'Refreshed app icon and splash screen.',
+    'Plant history now supports custom actions like Trimmed, Moved, and Fertilized instead of watering-only logs.',
+    'History entries can use preset color dots so plant care timelines are easier to scan.',
+    'Calendar day dots now reflect saved history colors and show richer day details for history, completed watering, and scheduled care.',
+    'The App Guide has been expanded with more detailed screen-by-screen help, including a dedicated Calendar guide.',
+    'First-time walkthrough now points users to Settings > App Guide for more help.',
+    'Added a polished What\'s New update screen that appears after app updates and can be reopened from Settings.',
   ],
   bugFixes: [
-    'Improved household setup flow so turning sharing off resets the setup cleanly.',
-    'Android UI polish for navigation, settings modals, and plant detail layout.',
+    'Improved iOS/TestFlight local photo recovery so managed plant images are less likely to disappear after app updates.',
+    'Added safer media-library handling so missing native support does not crash Add Plant.',
+    'Improved App Guide tab navigation with fading scroll arrows when more guide sections are available off-screen.',
   ],
   guideTip: 'Need a refresher later? Open Settings and tap App Guide for detailed usage tips.',
 };
