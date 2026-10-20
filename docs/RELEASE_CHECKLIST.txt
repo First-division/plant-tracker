@@ -1,0 +1,72 @@
+PLANTCARE - APP STORE RELEASE CHECKLIST & ROADMAP
+=================================================
+
+ROADMAP (do in this order)
+--------------------------
+Phase 1 - Ship the code (today)
+  1. Release 1.0.9 to TestFlight (npm run release:testflight, or
+     npx eas-cli build -p ios --profile production --auto-submit --non-interactive)
+     - Write release-notes/1.0.9-ios.md, run npm run generate:whats-new, bump app.json.
+     - Watch the build: Sentry's native module and Apple Sign-In are new.
+  2. Test on your real iPhone AND iPad (see "Device test pass" below).
+  3. Fix anything found, ship 1.0.10 if needed.
+
+Phase 2 - Accounts & legal (can be done while Phase 1 builds)
+  4. Review/rewrite the privacy policy at https://first-division.github.io/
+  5. Fill in App Privacy in App Store Connect (answers: docs/APP_STORE_PRIVACY.md).
+  6. Decide on crash reporting (Sentry DSN, or rely on Apple's built-in reports).
+
+Phase 3 - Store listing
+  7. Screenshots (iPhone 6.9"/6.5" and iPad 13"/12.9").
+  8. Name, subtitle, description, keywords, category, age rating.
+  9. Support URL + marketing URL, copyright, review notes + demo account info.
+
+Phase 4 - Submit
+  10. Pick the TestFlight build, answer export compliance, submit for review.
+  11. Respond to any App Review feedback; release manually or automatically.
+
+
+TODO LIST
+---------
+CODE / BUILD
+[ ] Write release-notes/1.0.9-ios.md
+[ ] npm run generate:whats-new (What's New screen is stale at 1.0.7)
+[ ] Bump version in app.json to 1.0.9
+[ ] Build + submit with EAS; confirm build succeeds
+[ ] Set the display name (app.json "name" is still "plant-tracker")
+[ ] (Optional) Add Sentry DSN to app.json extra.sentryDsn; crash reporting is off without it
+[ ] (Optional) Allow all iPad orientations - the app is portrait-locked, Apple may push back
+
+DEVICE TEST PASS (iPhone + iPad, release build from TestFlight)
+[ ] Sign in with Google
+[ ] Sign in with Apple
+[ ] Add plant with camera photo and library photo (permission prompts read well)
+[ ] Notifications permission prompt + a reminder actually fires
+[ ] Turn on cloud backup, delete the app, reinstall, restore (plants, photos, name, time zone, theme)
+[ ] Reset All Data: signs out, keeps no stale state, welcome screen animates once
+[ ] Delete Account & Cloud Data (use a throwaway account) - confirm data gone in Firebase console
+[ ] Household: create, join, leave
+[ ] Contact & Feedback opens an email to firstdivision159@gmail.com
+[ ] Orange theme, dark mode, tab labels fully visible on iPad
+[ ] iPad: Home grid, Calendar two-pane, Settings, welcome screen look good
+
+APP STORE CONNECT
+[ ] App Privacy label completed (docs/APP_STORE_PRIVACY.md)
+[ ] Privacy Policy URL set and accurate (Firebase, Google/Apple sign-in, photos, crash reports)
+[ ] Support URL set
+[ ] App name, subtitle, description, keywords, promo text
+[ ] Category (e.g. Lifestyle) and age rating questionnaire
+[ ] Screenshots: iPhone 6.9" (required), iPhone 6.5", iPad 13" (required since iPad is supported)
+[ ] App icon 1024x1024 (no transparency)
+[ ] Review notes: how to sign in / demo account, explain that Google or Apple sign-in is optional for backup
+[ ] Export compliance: standard HTTPS only (ITSAppUsesNonExemptEncryption = false)
+[ ] Select build, choose release option, Submit for Review
+
+FIREBASE
+[ ] Firestore rules are production (owner-only) - reference copy in firestore.rules; keep in sync with console
+[ ] Billing/quota alerts set up (photos are stored in Firestore)
+
+KNOWN LIMITATIONS (tell reviewers / be aware)
+- Apple Sign-In token is not revoked on account deletion (Firebase JS SDK limitation).
+- Support email is visible inside the app.
+- Backup photos are reduced-size copies stored in Firestore.

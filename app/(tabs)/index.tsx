@@ -15,6 +15,9 @@ import OnboardingWalkthrough from "@/components/onboarding-walkthrough";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { getThemeColors } from "@/constants/theme";
 import { getNextWaterDate, isPlantOverdue } from '@/services/plant-schedule';
+import { useTabletLayout } from '@/hooks/use-tablet-layout';
+
+const TABLET_CONTENT_MAX_WIDTH = 960;
 
 /** Show the user's plants, search/filter controls, and upcoming care reminders. */
 export default function HomeScreen() {
@@ -33,6 +36,9 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const { height } = useWindowDimensions();
+  const { width: windowWidth, isTablet, columns } = useTabletLayout();
+  const tabletContentWidth = Math.min(TABLET_CONTENT_MAX_WIDTH, windowWidth - 40);
+  const tabletGridItemStyle = isTablet ? { width: `${100 / columns}%` as const, paddingHorizontal: 8 } : undefined;
   const hasNavigatedToWelcome = useRef(false);
   const hasShownWhatsNew = useRef(false);
   const homeScrollRef = useRef<ScrollView>(null);
@@ -77,7 +83,7 @@ export default function HomeScreen() {
     },
     {
       title: 'Your Plant Cards',
-      description: 'All your plants appear here as cards. Tap a card to see details. There, tap Water to log it, or press and hold Water to pick a past date and time.',
+      description: 'All your plants appear here as cards. Tap a card to see details. There, tap Water to log it, or tap Other date to pick a past date and time.',
       icon: '🪴',
       targetRef: plantsGridRef,
     },
@@ -175,6 +181,13 @@ export default function HomeScreen() {
   }, [householdNotifications]);
 
   useEffect(() => {
+    // Once onboarding is done, a later reset is handled by settings; don't push welcome twice.
+    if (hasCompletedOnboarding) {
+      hasNavigatedToWelcome.current = true;
+    }
+  }, [hasCompletedOnboarding]);
+
+  useEffect(() => {
     // Only push welcome on cold launch (not after reset — settings handles that)
     if (!isLoading && !hasCompletedOnboarding && !hasNavigatedToWelcome.current) {
       hasNavigatedToWelcome.current = true;
@@ -268,7 +281,11 @@ export default function HomeScreen() {
       >
       <TouchableOpacity
         ref={addButtonRef}
-        style={[styles.addButton, { backgroundColor: theme.accent }]}
+        style={[
+          styles.addButton,
+          { backgroundColor: theme.accent },
+          isTablet && { right: 20 + (windowWidth - 40 - tabletContentWidth) / 2 },
+        ]}
         activeOpacity={0.8}
         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         accessibilityRole="button"
@@ -282,6 +299,7 @@ export default function HomeScreen() {
         style={styles.scrollContent}
         contentContainerStyle={[
           styles.scrollContentContainer,
+          isTablet && { maxWidth: TABLET_CONTENT_MAX_WIDTH },
           {
             minHeight: Platform.OS === 'android' ? height + 1 : undefined,
             paddingBottom: Math.max(insets.bottom + 96, 120),
@@ -523,9 +541,11 @@ export default function HomeScreen() {
             </TouchableOpacity>
           </View>
         )}
+        <View style={isTablet ? styles.tabletGrid : undefined}>
         {myPlants.map((item) => (
           <TouchableOpacity
             key={item.id}
+            style={tabletGridItemStyle}
             activeOpacity={0.85}
             onPress={() => handlePlantTap(item.id)}
             accessibilityRole="button"
@@ -562,6 +582,7 @@ export default function HomeScreen() {
           </TouchableOpacity>
         ))}
         </View>
+        </View>
         )}
 
         {/* Family Members' Plants */}
@@ -571,11 +592,13 @@ export default function HomeScreen() {
               <View style={[styles.sectionAccent, { backgroundColor: group.color }]} />
               <ThemedText style={styles.sectionTitle}>{group.ownerName}&apos;s Plants</ThemedText>
             </View>
+            <View style={isTablet ? styles.tabletGrid : undefined}>
             {group.plants.map((item) => {
               const overdue = isPlantOverdue(item);
               return (
                 <TouchableOpacity
                   key={item.id}
+                  style={tabletGridItemStyle}
                   activeOpacity={0.85}
                   onPress={() => handlePlantTap(item.id)}
                 >
@@ -621,6 +644,7 @@ export default function HomeScreen() {
                 </TouchableOpacity>
               );
             })}
+            </View>
           </View>
         ))}
       </ScrollView>
@@ -1040,6 +1064,12 @@ const styles = StyleSheet.create({
   },
 
   // Family plant sections
+  tabletGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginHorizontal: -8,
+  },
+
   familySection: {
     marginTop: 20,
   },

@@ -159,3 +159,7 @@ See `README.md` for local setup and Android Google sign-in configuration.
 - The sign-in sheet shows errors inline and can be cancelled while a sign-in is in flight (a late result is ignored).
 - The welcome tour has "Skip tour" and "Skip for now" (saves the default name "Plant Lover", editable in Settings).
 - Modal screens, the welcome tour, the sign-in sheet and the walkthrough card follow the selected color theme and appearance.
+
+
+### Personal backup settings
+Besides plants, personal backup stores the user's name, time zone, default check interval, color theme and appearance in the owner-only document `users/{uid}/private/settings`. They sync only after onboarding is complete (so a reset device never overwrites them with defaults) and are re-applied by Restore from Backup. Reset All Data also signs out of the backup account.

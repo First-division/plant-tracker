@@ -83,8 +83,26 @@ export async function registerForPushNotifications(): Promise<boolean> {
   return true;
 }
 
+const LOCATION_HINTS: { match: RegExp; hint: string }[] = [
+  { match: /kitchen/i, hint: 'Give it a quick drink while you’re in the kitchen.' },
+  { match: /bath|shower|powder|toilet|\bwc\b/i, hint: 'Give it a drink next time you’re freshening up.' },
+  { match: /bed|nursery|guest/i, hint: 'Give it a drink next time you’re in the bedroom.' },
+  { match: /living|lounge|family|\bden\b|sitting/i, hint: 'Give it a drink next time you’re relaxing in the living room.' },
+  { match: /office|desk|study|work/i, hint: 'Take a quick break from work and give it a drink.' },
+  { match: /patio|porch|balcony|garden|yard|deck|outside|outdoor|terrace/i, hint: 'Step outside and give it a drink.' },
+  { match: /window|sill|sun/i, hint: 'Give it a drink while the sunlight is on it.' },
+  { match: /dining|hall|entry|foyer|stairs/i, hint: 'Give it a drink next time you walk past.' },
+];
+
+/** Pick a short, friendly nudge that matches where the plant lives. */
+function getLocationHint(location: string | undefined): string {
+  const place = location?.trim() ?? '';
+  const match = LOCATION_HINTS.find(({ match: pattern }) => pattern.test(place));
+  return match?.hint ?? 'Give it a drink when you get a chance.';
+}
+
 function buildNotificationBody(plant: Plant): string {
-  const base = `Your ${plant.name} in ${plant.location} needs watering today.`;
+  const base = `Your plant ${plant.name} needs watering today. ${getLocationHint(plant.location)}`;
   const log = plant.wateringLog || [];
   const latestWatering = getMostRecentWateringEntryOnOrBefore(getWateringEntries(log), new Date());
   if (latestWatering?.wateredBy) {

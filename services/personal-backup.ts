@@ -6,6 +6,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  writeBatch,
   onSnapshot,
   setDoc,
 } from 'firebase/firestore';
@@ -385,6 +386,49 @@ export async function snapshotPersonalBackup(userId: string): Promise<PersonalBa
       firestoreToDeletedPlantTombstone(deletedPlantDoc.data(), deletedPlantDoc.id),
     ),
   };
+}
+
+/** Erase everything stored for this user: plants, photos, deletion records and the profile. */
+export async function deleteAllPersonalBackupData(userId: string): Promise<void> {
+  const collections = [
+    personalPlantsCol(userId),
+    plantPhotosCol(userId),
+    deletedPlantsCol(userId),
+    collection(getDb(), 'users', userId, 'private'),
+  ];
+
+  for (const col of collections) {
+    const snapshot = await getDocs(col);
+    for (let i = 0; i < snapshot.docs.length; i += 400) {
+      const batch = writeBatch(getDb());
+      snapshot.docs.slice(i, i + 400).forEach((docSnapshot) => batch.delete(docSnapshot.ref));
+      await batch.commit();
+    }
+  }
+
+  await deleteDoc(doc(getDb(), 'users', userId));
+}
+
+export type PersonalBackupSettings = {
+  userName?: string;
+  timezone?: string;
+  defaultCheckInterval?: string;
+  colorTheme?: string;
+  appearance?: string;
+};
+
+/** Save the user's name and preferences alongside the plants. */
+export async function savePersonalBackupSettings(
+  userId: string,
+  settings: PersonalBackupSettings,
+): Promise<void> {
+  await setDoc(doc(getDb(), 'users', userId, 'private', 'settings'), settings);
+}
+
+/** Read the backed-up name and preferences, if any. */
+export async function fetchPersonalBackupSettings(userId: string): Promise<PersonalBackupSettings | null> {
+  const settingsSnapshot = await getDoc(doc(getDb(), 'users', userId, 'private', 'settings'));
+  return settingsSnapshot.exists() ? (settingsSnapshot.data() as PersonalBackupSettings) : null;
 }
 
 /** Record that this user has disabled personal cloud backup. */

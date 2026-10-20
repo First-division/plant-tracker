@@ -2,7 +2,7 @@
   "expo": {
     "name": "plant-tracker",
     "slug": "plant-tracker",
-    "version": "1.0.8",
+    "version": "1.0.9",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "planttracker",
@@ -10,6 +10,7 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
+      "usesAppleSignIn": true,
       "bundleIdentifier": "com.firstdivisioncaptain.plant-tracker",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
@@ -42,6 +43,15 @@
           }
         }
       ],
+      "expo-apple-authentication",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "PlantCare uses your photo library so you can choose a picture of each plant.",
+          "cameraPermission": "PlantCare uses your camera so you can take a picture of a plant.",
+          "microphonePermission": false
+        }
+      ],
       "expo-build-properties",
       "./plugins/with-modular-headers",
       [
@@ -53,8 +63,8 @@
       [
         "expo-media-library",
         {
-          "photosPermission": "Allow PlantCare to access your photos so you can choose plant pictures.",
-          "savePhotosPermission": "Allow PlantCare to save plant photos to your camera roll when you ask it to.",
+          "photosPermission": "PlantCare uses your photo library so you can choose a picture of each plant.",
+          "savePhotosPermission": "PlantCare saves a plant photo to your photo library only when you ask it to.",
           "isAccessMediaLocationEnabled": false
         }
       ],

@@ -8,6 +8,9 @@ import { PlantsProvider, usePlants } from '@/contexts/PlantContext';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { useWateringNotifications } from '@/hooks/use-notifications';
 import { getThemeColors } from '@/constants/theme';
+import { initCrashReporting } from '@/services/crash-reporting';
+
+initCrashReporting();
 
 /** Keep the tab navigator as the initial route when Expo Router restores navigation state. */
 export const unstable_settings = {

@@ -24,6 +24,9 @@ import {
 import { Picker } from '@react-native-picker/picker';
 import { usePlants, AppAppearance } from '@/contexts/PlantContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { deleteAllPersonalBackupData } from '@/services/personal-backup';
+import { SUPPORT_EMAIL } from '@/constants/support';
+import { useTabletLayout } from '@/hooks/use-tablet-layout';
 import { registerForPushNotifications } from '@/hooks/use-notifications';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -316,8 +319,7 @@ const APP_GUIDE_TOPICS: AppGuideTopic[] = [
       {
         title: 'Water on a Different Day',
         items: [
-          'Press and hold the Water button to choose the date and time you actually watered the plant.',
-          'Prefer a button? Tap Other date next to Water to do the same thing.',
+          'Tap Other date next to the Water button to choose the date and time you actually watered the plant.',
           'Backdated waterings appear on the Calendar and move the next reminder on the Home screen.',
         ],
       },
@@ -432,7 +434,7 @@ const APP_GUIDE_TOPICS: AppGuideTopic[] = [
       {
         title: 'Plant Detail Elements',
         items: [
-          'Use the Water button to log watering for today, or tap again to undo today’s watering. Press and hold Water, or tap Other date, to log a past watering.',
+          'Use the Water button to log watering for today, or tap again to undo today’s watering. Tap Other date to log a past watering.',
           'In the History section, enter an action like Trimmed, Moved, or Fertilized, pick a preset dot color, then tap Add.',
           'Tap the trash icon on a history row (or long-press it) to delete that entry, or use Clear all in the header to remove every entry for that plant.',
         ],
@@ -534,7 +536,7 @@ const APP_GUIDE_TOPICS: AppGuideTopic[] = [
       {
         title: 'Good to Know',
         items: [
-          'Plant details, schedules, and watering history are backed up. Photos are backed up too, as reduced-size copies, and come back when you restore. Restored photos are smaller than the originals.',
+          'Plant details, schedules, and watering history are backed up, along with your name, time zone, default watering interval, and theme. Photos are backed up too, as reduced-size copies, and come back when you restore. Restored photos are smaller than the originals.',
           'Your name and display settings are stored on the device, so you may be asked for your name again after a restore.',
           'Turning backup off keeps your plants on the device and leaves the cloud copy in place for next time.',
         ],
@@ -680,7 +682,9 @@ export default function SettingsScreen() {
     setHouseholdMemberColor,
   } = usePlants();
 
-  const { user, isAuthenticated, signOut, firebaseAvailable } = useAuth();
+  const { user, isAuthenticated, signOut, deleteAccount, firebaseAvailable } = useAuth();
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const { isTablet } = useTabletLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const hasRecoverableAuth = !!user && !user.isAnonymous;
@@ -904,6 +908,7 @@ export default function SettingsScreen() {
             setIsResetting(true);
             try {
               await resetUserData();
+              await signOut().catch(() => {});
             } catch (error) {
               console.error('Reset failed:', error);
               Alert.alert('Reset Failed', 'Some data could not be erased. Please try again.');
@@ -920,6 +925,58 @@ export default function SettingsScreen() {
         },
       ],
     );
+  };
+
+  const handleDeleteAccount = () => {
+    if (isDeletingAccount || isResetting) return;
+    Alert.alert(
+      'Delete Account & Cloud Data',
+      'This permanently deletes your account and everything stored in the cloud for it: backed-up plants, photos, settings, and your household membership. It also erases all data on this device. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Everything',
+          style: 'destructive',
+          onPress: async () => {
+            setIsDeletingAccount(true);
+            try {
+              await deleteAccount(async (userId) => {
+                // Stop backup listeners first so nothing is re-uploaded while the cloud copy is erased.
+                await setPersonalBackupEnabled(false);
+                await new Promise((resolve) => setTimeout(resolve, 400));
+                if (householdEnabled) {
+                  await leaveCurrentHousehold(userId);
+                }
+                await deleteAllPersonalBackupData(userId);
+              });
+              await resetUserData();
+            } catch (error: any) {
+              console.error('Account deletion failed:', error);
+              const cancelled = error?.code === 'ERR_REQUEST_CANCELED' || error?.code === '12501' || error?.code === 'SIGN_IN_CANCELLED';
+              if (!cancelled) {
+                Alert.alert('Delete Account', error?.message || 'Your account could not be deleted. Please try again.');
+              }
+              return;
+            } finally {
+              setIsDeletingAccount(false);
+            }
+            Alert.alert('Account Deleted', 'Your account and cloud data have been deleted.');
+            (navigation as any).navigate('index');
+            setTimeout(() => {
+              router.push('/welcome-modal');
+            }, 400);
+          },
+        },
+      ],
+    );
+  };
+
+  const handleSendFeedback = () => {
+    const subject = encodeURIComponent(`PlantCare feedback (${appVersionLabel})`);
+    const body = encodeURIComponent(`\n\n---\nApp version: ${appVersionLabel}\nPlatform: ${Platform.OS} ${Platform.Version}`);
+    Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=${subject}&body=${body}`).catch(() => {
+      Alert.alert('Contact Us', `Email us at ${SUPPORT_EMAIL}.`);
+    });
   };
 
   const handleEnablePersonalBackup = () => {
@@ -1184,6 +1241,7 @@ export default function SettingsScreen() {
       style={[styles.container, { backgroundColor: colors.bg }]}
       contentContainerStyle={[
         styles.content,
+        isTablet && { maxWidth: 720 },
         {
           paddingTop: settingsTopPadding,
           paddingBottom: Math.max(insets.bottom, 40),
@@ -1563,6 +1621,16 @@ export default function SettingsScreen() {
           rightElement: isResetting
             ? <ActivityIndicator color={colors.secondaryText} />
             : <Ionicons name="chevron-forward" size={18} color={colors.secondaryText} />,
+          isLast: !isAuthenticated,
+        })}
+        {isAuthenticated && renderRow({
+          icon: 'person-remove',
+          iconColor: colors.destructive,
+          label: isDeletingAccount ? 'Deleting…' : 'Delete Account & Cloud Data',
+          onPress: isDeletingAccount ? undefined : handleDeleteAccount,
+          rightElement: isDeletingAccount
+            ? <ActivityIndicator color={colors.secondaryText} />
+            : <Ionicons name="chevron-forward" size={18} color={colors.secondaryText} />,
           isLast: true,
         })}
       </View>
@@ -1594,6 +1662,12 @@ export default function SettingsScreen() {
           onPress: () => {
             void handleOpenPrivacyPolicy();
           },
+        })}
+        {renderRow({
+          icon: 'mail',
+          iconColor: '#007AFF',
+          label: 'Contact & Feedback',
+          onPress: handleSendFeedback,
         })}
         {renderRow({
           icon: 'leaf',

@@ -12,6 +12,7 @@ import { getThemeColors } from '@/constants/theme';
 import { getNextWaterDate, getStartOfLocalDay, snapToWaterDay } from '@/services/plant-schedule';
 import { parseCheckIntervalDays } from '@/services/plant-intervals';
 import { getWateringEntries, isSameLocalDay } from '@/services/watering-log';
+import { useTabletLayout } from '@/hooks/use-tablet-layout';
 
 type CalendarEvent = {
   plant: Plant;
@@ -150,6 +151,7 @@ export default function CalendarScreen() {
   const [selectedDay, setSelectedDay] = useState<number | null>(today.getDate());
   const [refreshing, setRefreshing] = useState(false);
   const { height } = useWindowDimensions();
+  const { isTablet } = useTabletLayout();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [undoInfo, setUndoInfo] = useState<{ plantId: string; plantName: string; entryDate: string } | null>(null);
@@ -187,6 +189,14 @@ export default function CalendarScreen() {
     () => buildDayEventsMap(plants, currentYear, currentMonth),
     [plants, currentYear, currentMonth],
   );
+
+  const todayEvents = useMemo(() => {
+    const now = new Date();
+    const events = buildDayEventsMap(plants, now.getFullYear(), now.getMonth())[now.getDate()];
+    return events || { completed: [], scheduled: [], history: [] };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plants, today.toDateString()]);
+  const todoTotal = todayEvents.scheduled.length + todayEvents.completed.length;
 
   const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
   const firstDay = new Date(currentYear, currentMonth, 1).getDay();
@@ -285,6 +295,7 @@ export default function CalendarScreen() {
         style={styles.scrollContent}
         contentContainerStyle={[
           styles.scrollContainer,
+          isTablet && styles.tabletScrollContainer,
           {
             minHeight: Platform.OS === 'android' ? height + 1 : undefined,
             paddingBottom: Math.max(insets.bottom + 96, 120),
@@ -300,6 +311,8 @@ export default function CalendarScreen() {
           />
         }
       >
+        <View style={isTablet ? styles.tabletColumns : undefined}>
+        <View style={isTablet ? styles.tabletLeftPane : undefined}>
         <View style={styles.header}>
           <ThemedText style={styles.monthTitle}>{MONTH_NAMES[currentMonth]} {currentYear}</ThemedText>
           <View style={styles.headerRight}>
@@ -409,8 +422,64 @@ export default function CalendarScreen() {
           </View>
         ))}
 
+        {/* Today's To-Do */}
+        <View style={[styles.todoCard, { backgroundColor: theme.cardBg }]}>
+          <View style={styles.todoHeader}>
+            <ThemedText style={styles.todoTitle}>Today&apos;s To-Do</ThemedText>
+            {todoTotal > 0 && (
+              <ThemedText style={[styles.todoCount, { color: theme.secondaryText }]}>
+                {todayEvents.completed.length}/{todoTotal} done
+              </ThemedText>
+            )}
+          </View>
+          {todoTotal === 0 && (
+            <ThemedText style={[styles.noPlants, { color: theme.secondaryText }]}>No scheduled waterings today!</ThemedText>
+          )}
+          {todoTotal > 0 && todayEvents.scheduled.length === 0 && (
+            <ThemedText style={[styles.todoAllDone, { color: theme.primary }]}>All done for today! 🎉</ThemedText>
+          )}
+          {todayEvents.scheduled.map((event) => (
+            <TouchableOpacity
+              key={`todo-s-${event.plant.id}`}
+              style={styles.todoRow}
+              onPress={() => handleQuickWater(event.plant.id, event.plant.name, event.scheduledDate)}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: false }}
+              accessibilityLabel={`Water ${event.plant.name} in ${event.plant.location}`}
+            >
+              <View style={[styles.todoCheckbox, { borderColor: theme.primary }]} />
+              <View style={styles.todoText}>
+                <ThemedText style={styles.todoName}>Water {event.plant.name}</ThemedText>
+                <ThemedText style={[styles.plantLocation, { color: theme.secondaryText }]}>{event.plant.location}</ThemedText>
+              </View>
+            </TouchableOpacity>
+          ))}
+          {todayEvents.completed.map((event) => (
+            <TouchableOpacity
+              key={`todo-c-${event.plant.id}`}
+              style={[styles.todoRow, { opacity: 0.6 }]}
+              onPress={() => event.entryDate && handleUnwater(event.plant.id, event.plant.name, event.entryDate)}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: true }}
+              accessibilityLabel={`${event.plant.name} watered. Tap to undo`}
+            >
+              <View style={[styles.todoCheckbox, { borderColor: theme.primary, backgroundColor: theme.primary }]}>
+                <ThemedText style={styles.todoCheckmark}>✓</ThemedText>
+              </View>
+              <View style={styles.todoText}>
+                <ThemedText style={[styles.todoName, styles.todoNameDone]}>Water {event.plant.name}</ThemedText>
+                <ThemedText style={[styles.plantLocation, { color: theme.secondaryText }]}>
+                  {event.plant.location}{event.time ? ` · ${event.time}` : ''}
+                </ThemedText>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        </View>
+
         {/* Detail Panel */}
-        <View style={[styles.detailSection, { backgroundColor: theme.cardBg }]}>
+        <View style={[styles.detailSection, { backgroundColor: theme.cardBg }, isTablet && styles.tabletDetailSection]}>
           <ThemedText style={styles.detailTitle}>
             {selectedDay ? `${MONTH_NAMES[currentMonth]} ${selectedDay}, ${currentYear}` : 'Select a date'}
           </ThemedText>
@@ -550,6 +619,7 @@ export default function CalendarScreen() {
             </>
           )}
         </View>
+        </View>
       </ScrollView>
 
       {undoInfo && (
@@ -603,6 +673,21 @@ const styles = StyleSheet.create({
   todayDayText: { fontWeight: '600' },
   dotRow: { flexDirection: 'row', gap: 3, marginTop: 2 },
   dot: { width: 5, height: 5, borderRadius: 2.5 },
+  tabletScrollContainer: { maxWidth: 1040 },
+  tabletColumns: { flexDirection: 'row', alignItems: 'flex-start', gap: 24 },
+  tabletLeftPane: { flex: 1.3 },
+  todoCard: { marginTop: 16, borderRadius: 16, padding: 16 },
+  todoHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  todoTitle: { fontSize: 18, fontWeight: '700', lineHeight: 24 },
+  todoCount: { fontSize: 13, fontWeight: '500' },
+  todoAllDone: { fontSize: 14, fontWeight: '600', marginBottom: 4 },
+  todoRow: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 48, paddingVertical: 6 },
+  todoCheckbox: { width: 26, height: 26, borderRadius: 13, borderWidth: 2, justifyContent: 'center', alignItems: 'center' },
+  todoCheckmark: { color: '#fff', fontSize: 15, fontWeight: '700', lineHeight: 20 },
+  todoText: { flex: 1 },
+  todoName: { fontSize: 16, fontWeight: '600' },
+  todoNameDone: { textDecorationLine: 'line-through' },
+  tabletDetailSection: { flex: 1, marginTop: 88 },
   detailSection: { marginTop: 20, borderRadius: 16, padding: 16 },
   detailTitle: { fontSize: 18, fontWeight: '600', marginBottom: 12 },
   noPlants: { fontSize: 15, textAlign: 'center', paddingVertical: 16 },

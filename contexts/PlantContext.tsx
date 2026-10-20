@@ -10,8 +10,8 @@ import { isFirebaseAvailable } from '@/services/firebase';
 import { HouseholdMember, createHousehold, joinHousehold, leaveHousehold, getHouseholdMembers, updateMemberColor, subscribeToHouseholdMembers } from '@/services/household';
 import { uploadLocalPlants, subscribeToPlants, syncPlantToFirestore, deletePlantFromFirestore, addWateringEntry, appendPlantHistoryEntry, removeWateringEntry, clearWateringLog, snapshotPlantsFromFirestore, backfillPlantOwnership } from '@/services/plant-sync';
 import { HouseholdNotification, subscribeToNotifications, markNotificationRead, sendWaterReminder } from '@/services/household-notifications';
-import { DeletedPlantTombstone, deletePlantFromPersonalBackup, markPersonalBackupDisabled, PersonalBackupSnapshot, restorePlantPhotoFromBackup, snapshotPersonalBackup, subscribeToPersonalBackup, syncPlantToPersonalBackup } from '@/services/personal-backup';
-import { ColorThemeName } from '@/constants/theme';
+import { DeletedPlantTombstone, deletePlantFromPersonalBackup, fetchPersonalBackupSettings, savePersonalBackupSettings, markPersonalBackupDisabled, PersonalBackupSnapshot, restorePlantPhotoFromBackup, snapshotPersonalBackup, subscribeToPersonalBackup, syncPlantToPersonalBackup } from '@/services/personal-backup';
+import { COLOR_THEMES, ColorThemeName } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
 import { clearStoredPlantPhotos, deleteStoredPlantPhoto, getPlantPhotoVersion, reconcilePlantPhotoUris } from '@/services/plant-photos';
 import { removeWateringEntriesForDay, upsertWateringEntryForDay } from '@/services/watering-log';
@@ -645,8 +645,49 @@ export function PlantsProvider({ children }: { children: ReactNode }) {
     const backupSnapshot = await snapshotPersonalBackup(personalBackupUserId);
     skipBackupRestoreRef.current = false;
     setBackupRestoreOffer(null);
-    return applyPersonalBackupMerge(backupSnapshot, personalBackupUserId, true);
+    const result = await applyPersonalBackupMerge(backupSnapshot, personalBackupUserId, true);
+
+    try {
+      const settings = await fetchPersonalBackupSettings(personalBackupUserId);
+      if (settings) {
+        if (settings.timezone) await setTimezone(settings.timezone);
+        if (settings.defaultCheckInterval) await setDefaultCheckInterval(settings.defaultCheckInterval);
+        if (settings.colorTheme && settings.colorTheme in COLOR_THEMES) {
+          await setColorTheme(settings.colorTheme as ColorThemeName);
+        }
+        if (settings.appearance === 'light' || settings.appearance === 'dark' || settings.appearance === 'system') {
+          await setAppearance(settings.appearance);
+        }
+        if (settings.userName) await setUserName(settings.userName);
+      }
+    } catch (error) {
+      console.warn('Error restoring backed-up settings:', error);
+    }
+
+    return result;
   }, [applyPersonalBackupMerge, householdEnabled, personalBackupUserId]);
+
+  // Back up the name and preferences. Skipped until onboarding is done so a freshly reset
+  // device never overwrites the cloud copy with defaults.
+  useEffect(() => {
+    if (!personalBackupEnabled || householdEnabled || !personalBackupUserId || !hasCompletedOnboarding || !userName) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      savePersonalBackupSettings(personalBackupUserId, {
+        userName,
+        timezone,
+        defaultCheckInterval,
+        colorTheme,
+        appearance,
+      }).catch((error) => console.warn('Error backing up settings:', error));
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [
+    appearance, colorTheme, defaultCheckInterval, hasCompletedOnboarding, householdEnabled,
+    personalBackupEnabled, personalBackupUserId, timezone, userName,
+  ]);
 
   useEffect(() => {
     if (!backupRestoreOffer) return;

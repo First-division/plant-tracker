@@ -34,8 +34,6 @@ export default function PlantDetailScreen() {
   const [wateringPickerMode, setWateringPickerMode] = useState<'date' | 'time' | null>(null);
   const [wateringDate, setWateringDate] = useState(new Date());
   const [isSavingWatering, setIsSavingWatering] = useState(false);
-  const suppressWaterPressRef = useRef(false);
-  const suppressWaterPressTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const HISTORY_COLORS = ['#4CD964', '#0A84FF', '#FF9F0A', '#AF52DE', '#FF375F', '#30B0C7'];
   const [selectedHistoryColor, setSelectedHistoryColor] = useState(HISTORY_COLORS[0]);
   const detailScrollRef = useRef<ScrollView>(null);
@@ -85,15 +83,6 @@ export default function PlantDetailScreen() {
   const wateredToday = !!todaysEntry;
 
   const handleWater = async () => {
-    if (suppressWaterPressRef.current) {
-      suppressWaterPressRef.current = false;
-      if (suppressWaterPressTimeoutRef.current) {
-        clearTimeout(suppressWaterPressTimeoutRef.current);
-        suppressWaterPressTimeoutRef.current = null;
-      }
-      return;
-    }
-
     try {
       if (wateredToday && todaysEntry) {
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -111,25 +100,6 @@ export default function PlantDetailScreen() {
     setWateringDate(new Date());
     setWateringPickerMode('date');
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  };
-
-  const handleWaterLongPress = () => {
-    suppressWaterPressRef.current = true;
-    if (suppressWaterPressTimeoutRef.current) {
-      clearTimeout(suppressWaterPressTimeoutRef.current);
-    }
-    openPastWateringPicker();
-  };
-
-  const handleWaterPressOut = () => {
-    if (!suppressWaterPressRef.current) {
-      return;
-    }
-
-    suppressWaterPressTimeoutRef.current = setTimeout(() => {
-      suppressWaterPressRef.current = false;
-      suppressWaterPressTimeoutRef.current = null;
-    }, 300);
   };
 
   const handleWateringPickerChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
@@ -335,12 +305,9 @@ export default function PlantDetailScreen() {
           <TouchableOpacity
             style={[styles.waterButton, styles.waterButtonFlex, { backgroundColor: wateredToday ? theme.accent : theme.primary }]}
             onPress={handleWater}
-            onLongPress={handleWaterLongPress}
-            onPressOut={handleWaterPressOut}
-            delayLongPress={450}
             activeOpacity={0.8}
             accessibilityRole="button"
-            accessibilityLabel={wateredToday ? 'Watered today. Tap to undo' : 'Water now. Press and hold to choose a different date'}
+            accessibilityLabel={wateredToday ? 'Watered today. Tap to undo' : 'Water now'}
           >
             <ThemedText style={styles.waterButtonText}>
               {wateredToday ? '✓' : 'Water'}
@@ -357,9 +324,6 @@ export default function PlantDetailScreen() {
             <ThemedText style={[styles.otherDateText, { color: theme.primary }]}>Other date</ThemedText>
           </TouchableOpacity>
         </View>
-        <ThemedText style={[styles.waterTip, { color: theme.secondaryText }]}>
-          Tip: press and hold Water to pick a different date and time.
-        </ThemedText>
 
         {Platform.OS === 'ios' && (
           <Modal
@@ -707,12 +671,6 @@ const styles = StyleSheet.create({
   otherDateText: {
     fontSize: 15,
     fontWeight: '600',
-  },
-  waterTip: {
-    fontSize: 12,
-    textAlign: 'center',
-    marginTop: 8,
-    marginHorizontal: 20,
   },
   waterButton: {
     marginHorizontal: 20,

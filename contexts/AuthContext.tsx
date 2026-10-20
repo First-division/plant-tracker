@@ -10,6 +10,9 @@ import {
   onAuthStateChanged,
   signInAnonymously as firebaseSignInAnonymously,
   signInWithCredential,
+  reauthenticateWithCredential,
+  deleteUser,
+  AuthCredential,
   signOut as firebaseSignOut,
   OAuthProvider,
   GoogleAuthProvider,
@@ -52,6 +55,7 @@ type AuthContextType = {
   signInWithGoogle: () => Promise<void>;
   signInAnonymously: () => Promise<void>;
   signOut: () => Promise<void>;
+  deleteAccount: (deleteCloudData: (userId: string) => Promise<void>) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -85,7 +89,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return unsubscribe;
   }, []);
 
-  const signInWithApple = async () => {
+  const getAppleCredential = async (): Promise<AuthCredential> => {
     if (Platform.OS !== 'ios') {
       throw new Error('Apple Sign-In is only available on iOS');
     }
@@ -108,18 +112,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!identityToken) throw new Error('No identity token returned from Apple');
 
     const provider = new OAuthProvider('apple.com');
-    const oauthCredential = provider.credential({
+    return provider.credential({
       idToken: identityToken,
       rawNonce: nonce,
     });
-    await signInWithCredential(getAuth(), oauthCredential);
+  };
+
+  const signInWithApple = async () => {
+    await signInWithCredential(getAuth(), await getAppleCredential());
   };
 
   const signInAnonymously = async () => {
     await firebaseSignInAnonymously(getAuth());
   };
 
-  const signInWithGoogle = async () => {
+  const getGoogleCredential = async (): Promise<AuthCredential> => {
     if (!googleSignInAvailable) {
       throw new Error(
         'Google sign-in is not configured for this Android build yet. Use Share Code Only for now, or add EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID and rebuild.',
@@ -130,8 +137,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const response = await GoogleSignin.signIn();
     const idToken = response.data?.idToken;
     if (!idToken) throw new Error('No ID token returned from Google');
-    const credential = GoogleAuthProvider.credential(idToken);
-    await signInWithCredential(getAuth(), credential);
+    return GoogleAuthProvider.credential(idToken);
+  };
+
+  const signInWithGoogle = async () => {
+    await signInWithCredential(getAuth(), await getGoogleCredential());
   };
 
   const handleSignOut = async () => {
@@ -164,6 +174,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  /**
+   * Permanently delete the signed-in account. The user is re-verified first so that a cancelled
+   * prompt leaves everything untouched; cloud data is erased before the auth user itself.
+   */
+  const deleteAccount = async (deleteCloudData: (userId: string) => Promise<void>) => {
+    const currentUser = getAuth().currentUser;
+    if (!currentUser) {
+      throw new Error('You are not signed in.');
+    }
+
+    const providerId = currentUser.providerData[0]?.providerId;
+    if (providerId === 'apple.com') {
+      await reauthenticateWithCredential(currentUser, await getAppleCredential());
+    } else if (providerId === 'google.com') {
+      await reauthenticateWithCredential(currentUser, await getGoogleCredential());
+    }
+
+    await deleteCloudData(currentUser.uid);
+    await deleteUser(currentUser);
+    await clearLocalUser();
+
+    try {
+      await GoogleSignin.revokeAccess();
+    } catch {
+      // Ignore: there is no cached Google session for Apple or anonymous accounts.
+    }
+
+    setUser(null);
+  };
+
   const value: AuthContextType = {
     user,
     isAuthenticated: !!user,
@@ -174,6 +214,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signInWithGoogle,
     signInAnonymously,
     signOut: handleSignOut,
+    deleteAccount,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

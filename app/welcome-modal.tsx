@@ -167,8 +167,9 @@ export default function WelcomeModal() {
   // Responsive sizes
   const isSmall = screenH < 700;
   const cardPadding = isSmall ? 20 : 28;
-  const titleSize = Math.min(28, screenW * 0.07);
-  const bodySize = Math.min(16, screenW * 0.04);
+  const isTablet = screenW >= 700;
+  const titleSize = isTablet ? 34 : Math.min(28, screenW * 0.07);
+  const bodySize = isTablet ? 20 : Math.min(16, screenW * 0.04);
 
   const renderStepContent = () => {
     switch (step) {
@@ -223,7 +224,7 @@ export default function WelcomeModal() {
               Open a plant and tap <ThemedText style={[s.highlight, { color: palette.primary }]}>Water</ThemedText> to log it for today.
             </ThemedText>
             <ThemedText style={[s.body, { fontSize: bodySize, marginTop: 12, color: colors.textSecondary }]}>
-              Forgot to log it? <ThemedText style={[s.highlight, { color: palette.primary }]}>Press and hold Water</ThemedText> to pick the day and time you really watered, or tap Other date.
+              Forgot to log it? <ThemedText style={[s.highlight, { color: palette.primary }]}>Tap Other date</ThemedText> to pick the day and time you really watered.
             </ThemedText>
           </>
         );
@@ -325,7 +326,7 @@ export default function WelcomeModal() {
           keyboardShouldPersistTaps="handled"
           bounces={false}
         >
-          <View style={[s.card, { padding: cardPadding, backgroundColor: colors.card }]}>
+          <View style={[s.card, isTablet && { maxWidth: 580 }, { padding: cardPadding, backgroundColor: colors.card }]}>
             <Animated.View style={{ opacity: fadeAnim, alignItems: 'center', width: '100%' }}>
               {renderStepContent()}
             </Animated.View>

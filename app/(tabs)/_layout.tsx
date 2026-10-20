@@ -7,7 +7,7 @@ import { getThemeColors } from '@/constants/theme';
 
 //TODO use this ship and update with new features: npm run release:testflight
 
-const IOS_TAB_TRIGGER_OPTIONS = Platform.OS === 'ios'
+const IOS_TAB_TRIGGER_OPTIONS = Platform.OS === 'ios' && !Platform.isPad
   ? {
       titlePositionAdjustment: { vertical: 2 },
       selectedTitlePositionAdjustment: { vertical: 2 },
@@ -32,7 +32,7 @@ export default function TabLayout() {
       labelStyle={{
         default: {
           color: theme.secondaryText,
-          fontWeight: '500',
+          fontWeight: Platform.OS === 'ios' && Platform.isPad ? '600' : '500',
         },
         selected: {
           color: theme.primary,
