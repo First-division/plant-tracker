@@ -1,6 +1,7 @@
 import { useColorScheme as useRNColorScheme } from 'react-native';
 import { usePlants } from '@/contexts/PlantContext';
 
+/** Resolve the effective color scheme from the saved preference or device setting. */
 export function useColorScheme() {
   const systemScheme = useRNColorScheme();
   const { appearance } = usePlants();

@@ -2,12 +2,14 @@ import { StyleSheet, Text, type TextProps } from 'react-native';
 
 import { useThemeColor } from '@/hooks/use-theme-color';
 
+/** Text props extended with theme color overrides and standard app typography variants. */
 export type ThemedTextProps = TextProps & {
   lightColor?: string;
   darkColor?: string;
   type?: 'default' | 'title' | 'defaultSemiBold' | 'subtitle' | 'link';
 };
 
+/** Render themed text with a named typography variant and optional color overrides. */
 export function ThemedText({
   style,
   lightColor,

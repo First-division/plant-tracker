@@ -9,6 +9,7 @@ import { AuthProvider } from '@/contexts/AuthContext';
 import { useWateringNotifications } from '@/hooks/use-notifications';
 import { getThemeColors } from '@/constants/theme';
 
+/** Keep the tab navigator as the initial route when Expo Router restores navigation state. */
 export const unstable_settings = {
   anchor: '(tabs)',
 };
@@ -63,7 +64,8 @@ function RootLayoutNav() {
             presentation: 'modal',
             gestureEnabled: false,
             headerShown: false,
-            navigationBarColor: '#535353',
+            navigationBarColor: theme.screenBg,
+            contentStyle: { backgroundColor: theme.screenBg },
           }}
         />
         <Stack.Screen
@@ -83,7 +85,8 @@ function RootLayoutNav() {
           options={{
             presentation: 'modal',
             headerShown: false,
-            navigationBarColor: isDark ? '#000000' : '#F2F2F7',
+            navigationBarColor: theme.screenBg,
+            contentStyle: { backgroundColor: theme.screenBg },
           }}
         />
       </Stack>
@@ -92,6 +95,7 @@ function RootLayoutNav() {
   );
 }
 
+/** Mount global providers once around the app's authenticated routing and screen tree. */
 export default function RootLayout() {
   return (
     <AuthProvider>

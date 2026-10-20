@@ -20,6 +20,10 @@ Plant Tracker is an Expo app for plant care reminders, calendar tracking, househ
 
 This app uses Expo Router and the app directory for routing.
 
+## Project documentation
+
+See [docs/PROJECT_DOCUMENTATION.md](./docs/PROJECT_DOCUMENTATION.md) for the internal architecture, external services and integrations, data flows, and release/TestFlight and release-note workflows.
+
 ## Android Google sign-in for household sharing
 
 The Android Google sign-in path is gated behind `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`.

@@ -8,6 +8,9 @@ import {
   useWindowDimensions,
   LayoutRectangle,
 } from 'react-native';
+import { usePlants } from '@/contexts/PlantContext';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { getThemeColors } from '@/constants/theme';
 
 interface WalkthroughStep {
   title: string;
@@ -23,8 +26,13 @@ interface OnboardingWalkthroughProps {
   onComplete: () => void;
 }
 
+/** Guide a user through measured UI targets using a spotlight and step-by-step overlay. */
 export default function OnboardingWalkthrough({ steps, onComplete }: OnboardingWalkthroughProps) {
-  const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = useWindowDimensions();
+  const { height: SCREEN_HEIGHT } = useWindowDimensions();
+  const { colorTheme } = usePlants();
+  const isDark = useColorScheme() !== 'light';
+  const theme = getThemeColors(colorTheme, isDark);
+  const dotInactive = isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)';
   const [currentStep, setCurrentStep] = useState(0);
   const [targetRect, setTargetRect] = useState<LayoutRectangle | null>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -53,7 +61,7 @@ export default function OnboardingWalkthrough({ steps, onComplete }: OnboardingW
       duration: 300,
       useNativeDriver: true,
     }).start();
-  }, []);
+  }, [fadeAnim]);
 
   useEffect(() => {
     // Animate card on step change
@@ -68,7 +76,7 @@ export default function OnboardingWalkthrough({ steps, onComplete }: OnboardingW
     // Small delay to let layout settle before measuring
     const timer = setTimeout(measureTarget, 100);
     return () => clearTimeout(timer);
-  }, [currentStep, measureTarget]);
+  }, [currentStep, measureTarget, cardAnim]);
 
   const handleNext = () => {
     if (currentStep < steps.length - 1) {
@@ -141,6 +149,7 @@ export default function OnboardingWalkthrough({ steps, onComplete }: OnboardingW
               style={[
                 styles.spotlight,
                 {
+                  borderColor: theme.primary,
                   top: targetRect!.y - 8,
                   left: targetRect!.x - 8,
                   width: targetRect!.width + 16,
@@ -157,6 +166,7 @@ export default function OnboardingWalkthrough({ steps, onComplete }: OnboardingW
       <Animated.View
         style={[
           styles.card,
+          { backgroundColor: isDark ? theme.cardBg : theme.lightCardBg, shadowColor: theme.primary },
           getCardStyle(),
           {
             opacity: cardAnim,
@@ -166,15 +176,15 @@ export default function OnboardingWalkthrough({ steps, onComplete }: OnboardingW
         pointerEvents="box-none"
       >
         <Text style={styles.icon}>{step.icon}</Text>
-        <Text style={styles.title}>{step.title}</Text>
-        <Text style={styles.description}>{step.description}</Text>
+        <Text style={[styles.title, { color: theme.text }]}>{step.title}</Text>
+        <Text style={[styles.description, { color: theme.secondaryText }]}>{step.description}</Text>
 
         {/* Step Dots */}
         <View style={styles.dotsRow}>
           {steps.map((_, i) => (
             <View
               key={i}
-              style={[styles.dot, i === currentStep && styles.dotActive]}
+              style={[styles.dot, { backgroundColor: dotInactive }, i === currentStep && [styles.dotActive, { backgroundColor: theme.primary }]]}
             />
           ))}
         </View>
@@ -182,13 +192,15 @@ export default function OnboardingWalkthrough({ steps, onComplete }: OnboardingW
         {/* Buttons */}
         <View style={styles.buttonsRow}>
           {!isLast && (
-            <TouchableOpacity onPress={handleSkip} style={styles.skipButton}>
-              <Text style={styles.skipText}>Skip</Text>
+            <TouchableOpacity onPress={handleSkip} style={styles.skipButton} accessibilityRole="button" accessibilityLabel="Skip walkthrough">
+              <Text style={[styles.skipText, { color: theme.secondaryText }]}>Skip</Text>
             </TouchableOpacity>
           )}
           <TouchableOpacity
             onPress={handleNext}
-            style={[styles.nextButton, isLast && styles.doneButton]}
+            style={[styles.nextButton, { backgroundColor: theme.primary }, isLast && styles.doneButton]}
+            accessibilityRole="button"
+            accessibilityLabel={isLast ? 'Finish walkthrough' : 'Next step'}
           >
             <Text style={styles.nextText}>{isLast ? "Let's Go!" : 'Next'}</Text>
           </TouchableOpacity>
@@ -269,6 +281,8 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   skipButton: {
+    minHeight: 44,
+    justifyContent: 'center',
     paddingVertical: 10,
     paddingHorizontal: 20,
   },
@@ -278,6 +292,8 @@ const styles = StyleSheet.create({
   },
   nextButton: {
     backgroundColor: '#00C853',
+    minHeight: 44,
+    justifyContent: 'center',
     paddingVertical: 12,
     paddingHorizontal: 32,
     borderRadius: 14,

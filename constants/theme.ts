@@ -8,6 +8,7 @@ import { Platform } from 'react-native';
 const tintColorLight = '#0a7ea4';
 const tintColorDark = '#fff';
 
+/** Base text, background, and navigation colors for light and dark modes. */
 export const Colors = {
   light: {
     text: '#11181C',
@@ -29,8 +30,10 @@ export const Colors = {
 
 // --- Color Theme Presets ---
 
+/** Stable identifier for a selectable app color palette. */
 export type ColorThemeName = 'default' | 'forest' | 'ocean' | 'sunset' | 'lavender' | 'rose' | 'pink';
 
+/** Palette values needed to style app screens consistently in light and dark modes. */
 export type ColorTheme = {
   name: ColorThemeName;
   label: string;
@@ -43,6 +46,7 @@ export type ColorTheme = {
   lightScreenBg: string; // light-mode screen background
 };
 
+/** Available named palettes that users can choose in settings. */
 export const COLOR_THEMES: Record<ColorThemeName, ColorTheme> = {
   default: {
     name: 'default',
@@ -123,6 +127,7 @@ export const COLOR_THEMES: Record<ColorThemeName, ColorTheme> = {
   },
 };
 
+/** Resolve a named palette and derive foreground/background values for the requested mode. */
 export function getThemeColors(themeName: ColorThemeName, isDark: boolean): ColorTheme & { text: string; secondaryText: string; background: string } {
   const theme = COLOR_THEMES[themeName] || COLOR_THEMES.default;
   if (isDark) {
@@ -144,6 +149,7 @@ export function getThemeColors(themeName: ColorThemeName, isDark: boolean): Colo
 }
 
 // Preset member colors for household calendar
+/** Color sequence used to assign household members distinguishable calendar colors. */
 export const MEMBER_COLORS = [
   '#FF3B30', '#007AFF', '#34C759', '#FF9500', '#AF52DE', '#FF2D55', '#5856D6', '#00C7BE',
 ];

@@ -1,3 +1,8 @@
+/**
+ * Local photo lifecycle management. Selected images are copied into the app sandbox so
+ * their URIs survive picker-cache cleanup and are reconciled after app-container changes.
+ */
+
 import * as FileSystem from 'expo-file-system/legacy';
 
 type PlantPhotoRecord = {
@@ -63,10 +68,12 @@ async function ensurePlantPhotoDirectory(): Promise<void> {
   await FileSystem.makeDirectoryAsync(PLANT_PHOTOS_DIR, { intermediates: true });
 }
 
+/** Whether a URI points into the app-managed plant photo directory. */
 export function isManagedPlantPhotoUri(photoUri?: string): boolean {
   return !!extractManagedPhotoFileName(photoUri) && !!PLANT_PHOTOS_DIR;
 }
 
+/** Copy a local picker URI into persistent app storage; leave remote URIs unchanged. */
 export async function persistPlantPhoto(photoUri: string): Promise<string> {
   const normalizedPhotoUri = photoUri.trim();
 
@@ -89,6 +96,10 @@ export async function persistPlantPhoto(photoUri: string): Promise<string> {
   return storedPhotoUri;
 }
 
+/**
+ * Repair an app-managed URI against the current app container and migrate legacy
+ * external picker URIs into persistent storage when possible.
+ */
 export async function resolvePlantPhotoUri(photoUri?: string): Promise<string | undefined> {
   if (!photoUri) {
     return undefined;
@@ -126,6 +137,7 @@ export async function resolvePlantPhotoUri(photoUri?: string): Promise<string | 
   }
 }
 
+/** Resolve photo URIs for a plant collection and return only records that changed. */
 export async function reconcilePlantPhotoUris<T extends PlantPhotoRecord>(plants: T[]): Promise<{
   plants: T[];
   changedPlants: T[];
@@ -156,6 +168,7 @@ export async function reconcilePlantPhotoUris<T extends PlantPhotoRecord>(plants
   };
 }
 
+/** Delete a single managed local photo; remote and external URIs are not deleted. */
 export async function deleteStoredPlantPhoto(photoUri?: string): Promise<void> {
   if (!photoUri || !isManagedPlantPhotoUri(photoUri)) {
     return;
@@ -174,6 +187,7 @@ export async function deleteStoredPlantPhoto(photoUri?: string): Promise<void> {
   }
 }
 
+/** Remove the entire app-managed plant photo directory during a full data reset. */
 export async function clearStoredPlantPhotos(): Promise<void> {
   if (!PLANT_PHOTOS_DIR) {
     return;

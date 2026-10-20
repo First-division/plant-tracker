@@ -1,5 +1,6 @@
 import Animated from 'react-native-reanimated';
 
+/** Render the small animated greeting wave used in onboarding surfaces. */
 export function HelloWave() {
   return (
     <Animated.Text

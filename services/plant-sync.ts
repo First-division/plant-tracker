@@ -1,3 +1,8 @@
+/**
+ * Firestore persistence for shared household plants, including transactional care-history
+ * changes and Firebase Storage upload/cleanup for plant photos.
+ */
+
 import {
   collection,
   doc,
@@ -5,9 +10,9 @@ import {
   getDocs,
   setDoc,
   deleteDoc,
-  updateDoc,
   onSnapshot,
   writeBatch,
+  runTransaction,
 } from 'firebase/firestore';
 import * as FileSystem from 'expo-file-system/legacy';
 import { deleteObject, getDownloadURL, ref as storageRef, uploadString } from 'firebase/storage';
@@ -187,6 +192,7 @@ async function persistPlantRecord(
   return nextPlant;
 }
 
+/** Upload local plants to a household without replacing records that already exist there. */
 export async function uploadLocalPlants(plants: Plant[], householdId: string): Promise<void> {
   for (const plant of plants) {
     const docRef = doc(plantsCol(householdId), plant.id);
@@ -197,6 +203,7 @@ export async function uploadLocalPlants(plants: Plant[], householdId: string): P
   }
 }
 
+/** Subscribe to a household's plants and normalize Firestore records for app state. */
 export function subscribeToPlants(
   householdId: string,
   callback: (plants: Plant[]) => void,
@@ -217,16 +224,29 @@ export function subscribeToPlants(
   );
 }
 
+/**
+ * Save plant fields to the household record while transactionally preserving its latest
+ * watering log, which may have changed since the screen loaded.
+ */
 export async function syncPlantToFirestore(plant: Plant, householdId: string): Promise<void> {
   const docRef = doc(plantsCol(householdId), plant.id);
   const existing = await getDoc(docRef);
   const existingPlant = existing.exists()
     ? { ...firestoreToPlant(existing.data(), plant.id), id: plant.id }
     : undefined;
+  const nextPlant = await preparePlantForFirestore(plant, householdId, existingPlant);
 
-  await persistPlantRecord(plant, householdId, existingPlant);
+  await runTransaction(getDb(), async (transaction) => {
+    const latest = await transaction.get(docRef);
+    const record = plantToFirestore(nextPlant);
+    if (latest.exists()) {
+      record.wateringLog = latest.data().wateringLog || [];
+    }
+    transaction.set(docRef, record, { merge: true });
+  });
 }
 
+/** Delete a shared plant and its associated Firebase Storage photo, if present. */
 export async function deletePlantFromFirestore(plantId: string, householdId: string): Promise<void> {
   const docRef = doc(plantsCol(householdId), plantId);
   const existing = await getDoc(docRef);
@@ -238,54 +258,70 @@ export async function deletePlantFromFirestore(plantId: string, householdId: str
   await deleteDoc(docRef);
 }
 
+/** Transactionally add or replace a watering event for its local calendar day. */
 export async function addWateringEntry(
   plantId: string,
   householdId: string,
   entry: WateringEntry,
 ): Promise<void> {
-  const plantDoc = await getDoc(doc(plantsCol(householdId), plantId));
-  if (!plantDoc.exists()) return;
+  await updatePlantWateringLog(plantId, householdId, (log) =>
+    upsertWateringEntryForDay(log, entry),
+  );
+}
 
-  const data = plantDoc.data();
-  const log: WateringEntry[] = data.wateringLog || [];
+/** Transactionally append a non-deduplicated care-history event. */
+export async function appendPlantHistoryEntry(
+  plantId: string,
+  householdId: string,
+  entry: WateringEntry,
+): Promise<void> {
+  await updatePlantWateringLog(plantId, householdId, (log) => [...log, entry]);
+}
 
-  await updateDoc(doc(plantsCol(householdId), plantId), {
-    wateringLog: upsertWateringEntryForDay(log, entry),
-    updatedAt: new Date().toISOString(),
+/** Apply a log transformation against the latest Firestore record and fail if it is missing. */
+async function updatePlantWateringLog(
+  plantId: string,
+  householdId: string,
+  updateLog: (log: WateringEntry[]) => WateringEntry[],
+): Promise<void> {
+  const plantRef = doc(plantsCol(householdId), plantId);
+  await runTransaction(getDb(), async (transaction) => {
+    const plantDoc = await transaction.get(plantRef);
+    if (!plantDoc.exists()) {
+      throw new Error(`Cannot update watering history: plant "${plantId}" does not exist.`);
+    }
+
+    const log: WateringEntry[] = plantDoc.data().wateringLog || [];
+    transaction.update(plantRef, {
+      wateringLog: updateLog(log),
+      updatedAt: new Date().toISOString(),
+    });
   });
 }
 
+/** Transactionally remove one history entry or all watering events for its local day. */
 export async function removeWateringEntry(
   plantId: string,
   householdId: string,
   entryDate: string,
   removeAllForDay = false,
 ): Promise<void> {
-  const plantDoc = await getDoc(doc(plantsCol(householdId), plantId));
-  if (plantDoc.exists()) {
-    const data = plantDoc.data();
-    const log: WateringEntry[] = data.wateringLog || [];
-    const nextLog = removeAllForDay
+  await updatePlantWateringLog(plantId, householdId, (log) =>
+    removeAllForDay
       ? removeWateringEntriesForDay(log, entryDate)
-      : log.filter((entry) => entry.date !== entryDate);
-
-    await updateDoc(doc(plantsCol(householdId), plantId), {
-      wateringLog: nextLog,
-      updatedAt: new Date().toISOString(),
-    });
-  }
+      : log.filter((entry) => entry.date !== entryDate),
+  );
 }
 
+/** Transactionally clear a plant's complete watering and care-history log. */
 export async function clearWateringLog(
   plantId: string,
   householdId: string,
 ): Promise<void> {
-  await updateDoc(doc(plantsCol(householdId), plantId), {
-    wateringLog: [],
-    updatedAt: new Date().toISOString(),
-  });
+  await updatePlantWateringLog(plantId, householdId, () => []);
 }
 
+/** Fetch and normalize the current household plant collection as a one-time snapshot. */
 export async function snapshotPlantsFromFirestore(householdId: string): Promise<Plant[]> {
   const snapshot = await getDocs(plantsCol(householdId));
   return snapshot.docs.map((d) => ({
@@ -294,6 +330,7 @@ export async function snapshotPlantsFromFirestore(householdId: string): Promise<
   }));
 }
 
+/** Set ownership metadata on existing household plants that predate ownership tracking. */
 export async function backfillPlantOwnership(
   householdId: string,
   ownerId: string,
@@ -351,7 +388,7 @@ function firestoreToPlant(data: Record<string, any>, plantId: string): Omit<Plan
     location: data.location || '',
     checkInterval: data.checkInterval || '1 week',
     birthday: data.birthday || '',
-    gender: data.gender || 'Unknown',
+    gender: data.gender === 'Unknown' ? 'They/them' : data.gender || 'They/them',
     wateringLog: (data.wateringLog || []) as WateringEntry[],
     createdAt,
     updatedAt: normalizeFirestoreTimestamp(data.updatedAt, createdAt),

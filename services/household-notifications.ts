@@ -1,3 +1,5 @@
+/** Firestore-backed in-app reminder messages shared between household members. */
+
 import {
   collection,
   doc,
@@ -13,6 +15,7 @@ import {
 } from 'firebase/firestore';
 import { getDb } from './firebase';
 
+/** Normalized household reminder message consumed by the app notification hook. */
 export type HouseholdNotification = {
   id: string;
   fromUserId: string;
@@ -29,6 +32,7 @@ function notificationsCol(householdId: string) {
   return collection(getDb(), 'households', householdId, 'notifications');
 }
 
+/** Create a household reminder addressed to one user. */
 export async function sendWaterReminder(
   fromUserId: string,
   fromName: string,
@@ -50,6 +54,7 @@ export async function sendWaterReminder(
   });
 }
 
+/** Subscribe to the newest 20 reminders addressed to a household user. */
 export function subscribeToNotifications(
   userId: string,
   householdId: string,
@@ -87,6 +92,7 @@ export function subscribeToNotifications(
   );
 }
 
+/** Mark a Firestore household reminder as read. */
 export async function markNotificationRead(
   notificationId: string,
   householdId: string,
@@ -94,6 +100,7 @@ export async function markNotificationRead(
   await updateDoc(doc(notificationsCol(householdId), notificationId), { read: true });
 }
 
+/** Fetch up to 20 unread reminders for a household user. */
 export async function getUnreadNotifications(
   userId: string,
   householdId: string,

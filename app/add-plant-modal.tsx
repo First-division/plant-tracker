@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   ScrollView,
@@ -10,14 +10,21 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Keyboard,
+  Modal,
+  Linking,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useNavigation, usePreventRemove } from '@react-navigation/native';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { Picker } from '@react-native-picker/picker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { usePlants } from '@/contexts/PlantContext';
+import { PlantGender, usePlants } from '@/contexts/PlantContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
@@ -30,11 +37,31 @@ import {
 import { persistPlantPhoto } from '@/services/plant-photos';
 import { getThemeColors } from '@/constants/theme';
 
-const GENDERS = [
+const GENDERS: { label: string; value: PlantGender }[] = [
   { label: 'Male', value: 'Male' },
   { label: 'Female', value: 'Female' },
-  { label: 'Unknown', value: 'Unknown' },
+  { label: 'They/them', value: 'They/them' },
+  { label: 'Other', value: 'Other' },
 ];
+
+/** Format a date as a local YYYY-MM-DD string (not UTC, so late-evening dates don't shift). */
+function toDateString(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+/** Parse a stored YYYY-MM-DD birthday as a local date; returns null when it is malformed or impossible. */
+function parseDateString(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value ?? '');
+  if (!match) return null;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const date = new Date(year, month - 1, day);
+  const isReal = date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
+  return isReal ? date : null;
+}
+
+type PhotoError = { message: string; retry?: () => void; openSettings?: boolean };
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -50,8 +77,10 @@ function getIntervalPartsFromInput(years: string, months: string, days: string):
   };
 }
 
+/** Create a plant or edit an existing plant using the route's optional plant identifier. */
 export default function AddPlantModal() {
   const router = useRouter();
+  const navigation = useNavigation();
   const params = useLocalSearchParams();
   const { addPlant, updatePlant, plants, defaultCheckInterval, colorTheme } = usePlants();
   const insets = useSafeAreaInsets();
@@ -76,19 +105,116 @@ export default function AddPlantModal() {
   const [photoUri, setPhotoUri] = useState<string | undefined>();
   const [name, setName] = useState('');
   const [location, setLocation] = useState('');
-  const [birthday, setBirthday] = useState(new Date().toISOString().split('T')[0]);
+  const [birthday, setBirthday] = useState(toDateString(new Date()));
+  const [showBirthdayPicker, setShowBirthdayPicker] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
+  const [photoError, setPhotoError] = useState<PhotoError | null>(null);
+  const loadedEditRef = useRef(false);
+  const skipLeaveConfirmRef = useRef(false);
   const [intervalYears, setIntervalYears] = useState('');
   const [intervalMonths, setIntervalMonths] = useState('');
   const [intervalDays, setIntervalDays] = useState('');
-  const [gender, setGender] = useState('Unknown');
+  const [gender, setGender] = useState<PlantGender>('They/them');
   const [waterDay, setWaterDay] = useState<number | undefined>(undefined);
   const [reminderHour, setReminderHour] = useState(9);
   const [reminderMinute, setReminderMinute] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isProcessingPhoto, setIsProcessingPhoto] = useState(false);
+  const formScrollRef = useRef<ScrollView>(null);
+  const focusedInputRef = useRef<TextInput | null>(null);
+  const keyboardTopRef = useRef<number | null>(null);
+  const scrollOffsetYRef = useRef(0);
+  const nameInputRef = useRef<TextInput>(null);
+  const locationInputRef = useRef<TextInput>(null);
+  const intervalYearsInputRef = useRef<TextInput>(null);
+  const intervalMonthsInputRef = useRef<TextInput>(null);
+  const intervalDaysInputRef = useRef<TextInput>(null);
 
   const isEditing = !!params.editId;
   const editId = params.editId as string;
+
+  /** Wrap a state setter so any user change marks the form as having unsaved edits. */
+  const edit = <T,>(setter: (value: T) => void) => (value: T) => {
+    setIsDirty(true);
+    setter(value);
+  };
+
+  usePreventRemove(isDirty && !isSubmitting, ({ data }) => {
+    if (skipLeaveConfirmRef.current) {
+      navigation.dispatch(data.action);
+      return;
+    }
+    Alert.alert('Discard changes?', 'You have unsaved changes to this plant. If you leave now they will be lost.', [
+      { text: 'Keep Editing', style: 'cancel' },
+      { text: 'Discard', style: 'destructive', onPress: () => navigation.dispatch(data.action) },
+    ]);
+  });
+
+  const scrollInputAboveKeyboard = (input: TextInput | null) => {
+    if (!input || !formScrollRef.current) {
+      return;
+    }
+
+    const keyboardTop = keyboardTopRef.current;
+    if (keyboardTop == null) {
+      return;
+    }
+
+    input.measureInWindow((_x, y, _w, h) => {
+      const inputBottom = y + h;
+      const desiredBottom = keyboardTop - 24;
+      const overlap = inputBottom - desiredBottom;
+
+      if (overlap <= 0) {
+        return;
+      }
+
+      formScrollRef.current?.scrollTo({
+        y: Math.max(0, scrollOffsetYRef.current + overlap + 8),
+        animated: true,
+      });
+    });
+  };
+
+  const handleInputFocus = (input: TextInput | null) => {
+    focusedInputRef.current = input;
+    requestAnimationFrame(() => {
+      scrollInputAboveKeyboard(input);
+    });
+  };
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const changeEvent = Platform.OS === 'ios' ? 'keyboardWillChangeFrame' : 'keyboardDidShow';
+
+    const showSub = Keyboard.addListener(showEvent, (event) => {
+      keyboardTopRef.current = event.endCoordinates.screenY;
+      requestAnimationFrame(() => {
+        scrollInputAboveKeyboard(focusedInputRef.current);
+      });
+    });
+
+    const changeSub = Keyboard.addListener(changeEvent, (event) => {
+      keyboardTopRef.current = event.endCoordinates.screenY;
+      requestAnimationFrame(() => {
+        scrollInputAboveKeyboard(focusedInputRef.current);
+      });
+    });
+
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => {
+      keyboardTopRef.current = null;
+    });
+
+    return () => {
+      showSub.remove();
+      changeSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  const handleFormScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    scrollOffsetYRef.current = event.nativeEvent.contentOffset.y;
+  };
 
   const setIntervalStateFromValue = (value: string) => {
     const parts = parseCheckIntervalParts(value);
@@ -98,6 +224,7 @@ export default function AddPlantModal() {
   };
 
   const handleIntervalInputChange = (setter: React.Dispatch<React.SetStateAction<string>>) => (value: string) => {
+    setIsDirty(true);
     setter(value.replace(/[^0-9]/g, ''));
   };
 
@@ -112,15 +239,16 @@ export default function AddPlantModal() {
   }, [defaultCheckInterval, isEditing]);
 
   useEffect(() => {
-    if (isEditing && editId) {
+    if (isEditing && editId && !loadedEditRef.current) {
       const plant = plants.find(p => p.id === editId);
       if (plant) {
+        loadedEditRef.current = true;
         setPhotoUri(plant.photoUri);
         setName(plant.name);
         setLocation(plant.location);
         setBirthday(plant.birthday);
         setIntervalStateFromValue(plant.checkInterval);
-        setGender(plant.gender);
+        setGender(plant.gender === 'Unknown' ? 'They/them' : plant.gender);
         if (plant.waterDay !== undefined) setWaterDay(plant.waterDay);
         if (plant.reminderTime) {
           const [h, m] = plant.reminderTime.split(':').map(Number);
@@ -162,10 +290,12 @@ export default function AddPlantModal() {
 
   const persistSelectedPhoto = async (selectedPhotoUri: string, promptToSaveToCameraRoll = false) => {
     setIsProcessingPhoto(true);
+    setPhotoError(null);
 
     try {
       const storedPhotoUri = await persistPlantPhoto(selectedPhotoUri);
       setPhotoUri(storedPhotoUri);
+      setIsDirty(true);
 
       if (promptToSaveToCameraRoll) {
         Alert.alert(
@@ -184,7 +314,10 @@ export default function AddPlantModal() {
       }
     } catch (error) {
       console.error('Error persisting plant photo:', error);
-      Alert.alert('Error', 'Failed to save the photo for this plant.');
+      setPhotoError({
+        message: 'We could not save that photo. Check that your device has free storage, then try again.',
+        retry: () => void persistSelectedPhoto(selectedPhotoUri, promptToSaveToCameraRoll),
+      });
     } finally {
       setIsProcessingPhoto(false);
     }
@@ -193,6 +326,7 @@ export default function AddPlantModal() {
   const pickImage = async () => {
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      setPhotoError(null);
 
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
@@ -206,17 +340,24 @@ export default function AddPlantModal() {
       }
     } catch (error) {
       console.error('Error picking image:', error);
-      Alert.alert('Error', 'Failed to pick image');
+      setPhotoError({
+        message: 'We could not open your photo library. Please try again.',
+        retry: () => void pickImage(),
+      });
     }
   };
 
   const takePicture = async () => {
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      setPhotoError(null);
 
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission needed', 'Camera permission is required to take a photo');
+        setPhotoError({
+          message: 'Camera access is turned off for PlantCare. Allow it in Settings to take a photo, or pick one from your library.',
+          openSettings: true,
+        });
         return;
       }
 
@@ -231,7 +372,10 @@ export default function AddPlantModal() {
       }
     } catch (error) {
       console.error('Error taking picture:', error);
-      Alert.alert('Error', 'Failed to take picture');
+      setPhotoError({
+        message: 'We could not open the camera. Please try again, or pick a photo instead.',
+        retry: () => void takePicture(),
+      });
     }
   };
 
@@ -243,6 +387,16 @@ export default function AddPlantModal() {
 
     if (!location.trim()) {
       Alert.alert('Validation Error', 'Please enter a location');
+      return;
+    }
+
+    const birthdayDate = parseDateString(birthday);
+    if (!birthdayDate) {
+      Alert.alert('Validation Error', 'Please choose a valid birthday.');
+      return;
+    }
+    if (birthdayDate.getTime() > Date.now()) {
+      Alert.alert('Validation Error', 'A plant\u2019s birthday cannot be in the future.');
       return;
     }
 
@@ -269,7 +423,7 @@ export default function AddPlantModal() {
           photoUri,
           birthday,
           checkInterval,
-          gender: gender as 'Male' | 'Female' | 'Unknown',
+          gender,
           waterDay: intervalTotalDays >= 7 ? waterDay : undefined,
           reminderTime: `${String(reminderHour).padStart(2, '0')}:${String(reminderMinute).padStart(2, '0')}`,
         });
@@ -280,12 +434,13 @@ export default function AddPlantModal() {
           photoUri,
           birthday,
           checkInterval,
-          gender: gender as 'Male' | 'Female' | 'Unknown',
+          gender,
           waterDay: intervalTotalDays >= 7 ? waterDay : undefined,
           reminderTime: `${String(reminderHour).padStart(2, '0')}:${String(reminderMinute).padStart(2, '0')}`,
         });
       }
 
+      skipLeaveConfirmRef.current = true;
       router.back();
     } catch (error) {
       Alert.alert('Error', isEditing ? 'Failed to update plant' : 'Failed to add plant');
@@ -293,6 +448,17 @@ export default function AddPlantModal() {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleBirthdayChange = (event: DateTimePickerEvent, selected?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowBirthdayPicker(false);
+    }
+    if (event.type === 'dismissed' || !selected) {
+      return;
+    }
+    setIsDirty(true);
+    setBirthday(toDateString(selected));
   };
 
   const handleCancel = () => {
@@ -307,11 +473,14 @@ export default function AddPlantModal() {
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
       <ScrollView
+        ref={formScrollRef}
         style={styles.scrollView}
         contentContainerStyle={[styles.scrollContent, { maxWidth: 600, alignSelf: 'center', width: '100%' }]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         bounces={true}
+        onScroll={handleFormScroll}
+        scrollEventThrottle={16}
       >
         {/* Header */}
         {/* <View style={styles.header}>
@@ -344,6 +513,41 @@ export default function AddPlantModal() {
               <ThemedText style={[styles.photoButtonText, { color: '#FFFFFF' }]}>🖼️ Pick Image</ThemedText>
             </TouchableOpacity>
           </View>
+          {!!photoUri && (
+            <TouchableOpacity
+              style={styles.removePhotoButton}
+              onPress={() => {
+                setIsDirty(true);
+                setPhotoUri(undefined);
+                setPhotoError(null);
+              }}
+              disabled={isSubmitting || isProcessingPhoto}
+              accessibilityRole="button"
+              accessibilityLabel="Remove photo"
+            >
+              <ThemedText style={styles.removePhotoText}>Remove photo</ThemedText>
+            </TouchableOpacity>
+          )}
+          {photoError && (
+            <View style={[styles.photoErrorBox, { borderColor: '#FF3B30' }]}>
+              <ThemedText style={[styles.photoErrorText, { color: colors.text }]}>{photoError.message}</ThemedText>
+              <View style={styles.photoErrorActions}>
+                {photoError.retry && (
+                  <TouchableOpacity onPress={photoError.retry} accessibilityRole="button">
+                    <ThemedText style={[styles.photoErrorAction, { color: colors.primary }]}>Try again</ThemedText>
+                  </TouchableOpacity>
+                )}
+                {photoError.openSettings && (
+                  <TouchableOpacity onPress={() => void Linking.openSettings()} accessibilityRole="button">
+                    <ThemedText style={[styles.photoErrorAction, { color: colors.primary }]}>Open Settings</ThemedText>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity onPress={() => setPhotoError(null)} accessibilityRole="button">
+                  <ThemedText style={[styles.photoErrorAction, { color: colors.secondaryText }]}>Dismiss</ThemedText>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
           {isProcessingPhoto && (
             <View style={styles.photoSavingRow}>
               <ActivityIndicator size="small" color={colors.primary} />
@@ -358,13 +562,16 @@ export default function AddPlantModal() {
           <View style={styles.fieldGroup}>
             <ThemedText style={[styles.label, { color: colors.text }]}>Plant Name</ThemedText>
             <TextInput
+              ref={nameInputRef}
               style={[styles.textInput, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.text }]}
               placeholder="e.g. Peace Lily"
               placeholderTextColor={colors.placeholder}
               value={name}
-              onChangeText={setName}
+              onChangeText={edit(setName)}
               editable={!isSubmitting}
               selectionColor={colors.primary}
+              onFocus={() => handleInputFocus(nameInputRef.current)}
+              onBlur={() => { focusedInputRef.current = null; }}
             />
           </View>
 
@@ -372,28 +579,34 @@ export default function AddPlantModal() {
           <View style={styles.fieldGroup}>
             <ThemedText style={[styles.label, { color: colors.text }]}>Plant Location</ThemedText>
             <TextInput
+              ref={locationInputRef}
               style={[styles.textInput, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.text }]}
               placeholder="e.g. Living Room Window"
               placeholderTextColor={colors.placeholder}
               value={location}
-              onChangeText={setLocation}
+              onChangeText={edit(setLocation)}
               editable={!isSubmitting}
               selectionColor={colors.primary}
+              onFocus={() => handleInputFocus(locationInputRef.current)}
+              onBlur={() => { focusedInputRef.current = null; }}
             />
           </View>
 
           {/* Birthday */}
           <View style={styles.fieldGroup}>
-            <ThemedText style={[styles.label, { color: colors.text }]}>Birthday (YYYY-MM-DD)</ThemedText>
-            <TextInput
-              style={[styles.textInput, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.text }]}
-              placeholder="2024-01-20"
-              placeholderTextColor={colors.placeholder}
-              value={birthday}
-              onChangeText={setBirthday}
-              editable={!isSubmitting}
-              selectionColor={colors.primary}
-            />
+            <ThemedText style={[styles.label, { color: colors.text }]}>Birthday</ThemedText>
+            <TouchableOpacity
+              style={[styles.textInput, styles.dateField, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder }]}
+              onPress={() => setShowBirthdayPicker(true)}
+              disabled={isSubmitting}
+              accessibilityRole="button"
+              accessibilityLabel="Choose birthday"
+            >
+              <ThemedText style={{ color: colors.text, fontSize: 16 }}>
+                {parseDateString(birthday)?.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) ?? 'Choose a date'}
+              </ThemedText>
+              <ThemedText style={{ color: colors.secondaryText }}>📅</ThemedText>
+            </TouchableOpacity>
           </View>
 
           {/* Check Interval Inputs */}
@@ -403,6 +616,7 @@ export default function AddPlantModal() {
             <View style={styles.intervalRow}>
               <View style={[styles.intervalCard, { backgroundColor: colors.card, borderColor: colors.inputBorder }]}>
                 <TextInput
+                  ref={intervalYearsInputRef}
                   style={[styles.intervalInput, { color: colors.text }]}
                   value={intervalYears}
                   onChangeText={handleIntervalInputChange(setIntervalYears)}
@@ -411,11 +625,14 @@ export default function AddPlantModal() {
                   placeholder="0"
                   placeholderTextColor={colors.placeholder}
                   selectionColor={colors.primary}
+                  onFocus={() => handleInputFocus(intervalYearsInputRef.current)}
+                  onBlur={() => { focusedInputRef.current = null; }}
                 />
                 <ThemedText style={[styles.intervalLabel, { color: colors.secondaryText }]}>Years</ThemedText>
               </View>
               <View style={[styles.intervalCard, { backgroundColor: colors.card, borderColor: colors.inputBorder }]}>
                 <TextInput
+                  ref={intervalMonthsInputRef}
                   style={[styles.intervalInput, { color: colors.text }]}
                   value={intervalMonths}
                   onChangeText={handleIntervalInputChange(setIntervalMonths)}
@@ -424,11 +641,14 @@ export default function AddPlantModal() {
                   placeholder="0"
                   placeholderTextColor={colors.placeholder}
                   selectionColor={colors.primary}
+                  onFocus={() => handleInputFocus(intervalMonthsInputRef.current)}
+                  onBlur={() => { focusedInputRef.current = null; }}
                 />
                 <ThemedText style={[styles.intervalLabel, { color: colors.secondaryText }]}>Months</ThemedText>
               </View>
               <View style={[styles.intervalCard, { backgroundColor: colors.card, borderColor: colors.inputBorder }]}>
                 <TextInput
+                  ref={intervalDaysInputRef}
                   style={[styles.intervalInput, { color: colors.text }]}
                   value={intervalDays}
                   onChangeText={handleIntervalInputChange(setIntervalDays)}
@@ -437,6 +657,8 @@ export default function AddPlantModal() {
                   placeholder="0"
                   placeholderTextColor={colors.placeholder}
                   selectionColor={colors.primary}
+                  onFocus={() => handleInputFocus(intervalDaysInputRef.current)}
+                  onBlur={() => { focusedInputRef.current = null; }}
                 />
                 <ThemedText style={[styles.intervalLabel, { color: colors.secondaryText }]}>Days</ThemedText>
               </View>
@@ -452,7 +674,7 @@ export default function AddPlantModal() {
             <View style={[styles.pickerContainer, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder }]}>
               <Picker
                 selectedValue={gender}
-                onValueChange={setGender}
+                onValueChange={edit(setGender)}
                 enabled={!isSubmitting}
                 style={[styles.picker, { color: colors.text }]}
               >
@@ -478,7 +700,7 @@ export default function AddPlantModal() {
                       waterDay === idx && styles.dayChipActive,
                       waterDay === idx && { backgroundColor: colors.primary, borderColor: colors.primary },
                     ]}
-                    onPress={() => setWaterDay(waterDay === idx ? undefined : idx)}
+                    onPress={() => { setIsDirty(true); setWaterDay(waterDay === idx ? undefined : idx); }}
                     disabled={isSubmitting}
                   >
                     <ThemedText style={[
@@ -502,7 +724,7 @@ export default function AddPlantModal() {
                 <View style={[styles.timePickerContainer, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder }]}>
                   <Picker
                     selectedValue={reminderHour}
-                    onValueChange={setReminderHour}
+                    onValueChange={edit(setReminderHour)}
                     enabled={!isSubmitting}
                     style={[styles.picker, { color: colors.text }]}
                   >
@@ -521,7 +743,7 @@ export default function AddPlantModal() {
                 <View style={[styles.timePickerContainer, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder }]}>
                   <Picker
                     selectedValue={reminderMinute}
-                    onValueChange={setReminderMinute}
+                    onValueChange={edit(setReminderMinute)}
                     enabled={!isSubmitting}
                     style={[styles.picker, { color: colors.text }]}
                   >
@@ -536,6 +758,37 @@ export default function AddPlantModal() {
         </View>
       </ScrollView>
       </KeyboardAvoidingView>
+
+      {Platform.OS === 'ios' ? (
+        <Modal visible={showBirthdayPicker} transparent animationType="fade" onRequestClose={() => setShowBirthdayPicker(false)}>
+          <View style={styles.pickerBackdrop}>
+            <View style={[styles.pickerCard, { backgroundColor: colors.card }]}>
+              <ThemedText style={[styles.pickerTitle, { color: colors.text }]}>Birthday</ThemedText>
+              <DateTimePicker
+                value={parseDateString(birthday) ?? new Date()}
+                mode="date"
+                display="spinner"
+                maximumDate={new Date()}
+                onChange={handleBirthdayChange}
+                themeVariant={isDark ? 'dark' : 'light'}
+              />
+              <TouchableOpacity style={styles.pickerDone} onPress={() => setShowBirthdayPicker(false)}>
+                <ThemedText style={{ color: colors.primary, fontWeight: '700', fontSize: 16 }}>Done</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      ) : (
+        showBirthdayPicker && (
+          <DateTimePicker
+            value={parseDateString(birthday) ?? new Date()}
+            mode="date"
+            display="default"
+            maximumDate={new Date()}
+            onChange={handleBirthdayChange}
+          />
+        )
+      )}
 
       {/* Bottom Action Buttons */}
       <View style={[styles.actionBar, { paddingBottom: Math.max(insets.bottom, 12), backgroundColor: colors.card, borderTopColor: colors.border }]}>
@@ -643,6 +896,74 @@ const styles = StyleSheet.create({
   photoButtonText: {
     fontWeight: '600',
     fontSize: 14,
+  },
+
+  removePhotoButton: {
+    alignSelf: 'center',
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+
+  removePhotoText: {
+    color: '#FF3B30',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
+  photoErrorBox: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 8,
+    gap: 8,
+  },
+
+  photoErrorText: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+
+  photoErrorActions: {
+    flexDirection: 'row',
+    gap: 20,
+  },
+
+  photoErrorAction: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+
+  dateField: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+
+  pickerBackdrop: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: 24,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+
+  pickerCard: {
+    borderRadius: 18,
+    padding: 16,
+  },
+
+  pickerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+
+  pickerDone: {
+    alignSelf: 'center',
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 24,
   },
 
   photoSavingRow: {

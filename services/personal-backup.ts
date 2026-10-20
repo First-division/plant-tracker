@@ -1,3 +1,5 @@
+/** Per-user Firestore backup, including plant-photo uploads and deletion tombstones. */
+
 import {
   collection,
   deleteDoc,
@@ -20,11 +22,13 @@ function deletedPlantsCol(userId: string) {
   return collection(getDb(), 'users', userId, 'deletedPlants');
 }
 
+/** Records a plant deletion so stale copies are not restored during backup reconciliation. */
 export type DeletedPlantTombstone = {
   plantId: string;
   deletedAt: string;
 };
 
+/** A consistent backup view of plants and deleted-plant markers. */
 export type PersonalBackupSnapshot = {
   plants: Plant[];
   deletedPlantTombstones: DeletedPlantTombstone[];
@@ -220,7 +224,7 @@ function firestoreToPlant(data: Record<string, any>, plantId: string): Omit<Plan
     location: data.location || '',
     checkInterval: data.checkInterval || '1 week',
     birthday: data.birthday || '',
-    gender: data.gender || 'Unknown',
+    gender: data.gender === 'Unknown' ? 'They/them' : data.gender || 'They/them',
     wateringLog: (data.wateringLog || []) as WateringEntry[],
     createdAt,
     updatedAt: normalizeFirestoreTimestamp(data.updatedAt, createdAt),
@@ -254,6 +258,10 @@ async function persistPlantRecord(plant: Plant, userId: string, existingPlant?: 
   return nextPlant;
 }
 
+/**
+ * Subscribe to both backup plants and deletion tombstones. The callback fires only after
+ * the initial snapshot for both collections has arrived; return value stops both listeners.
+ */
 export function subscribeToPersonalBackup(
   userId: string,
   callback: (snapshot: PersonalBackupSnapshot) => void,
@@ -310,6 +318,7 @@ export function subscribeToPersonalBackup(
   };
 }
 
+/** Upload or update one user's cloud copy of a plant and its photo when needed. */
 export async function syncPlantToPersonalBackup(plant: Plant, userId: string): Promise<Plant> {
   const docRef = doc(personalPlantsCol(userId), plant.id);
   const existing = await getDoc(docRef);
@@ -320,6 +329,7 @@ export async function syncPlantToPersonalBackup(plant: Plant, userId: string): P
   return persistPlantRecord(plant, userId, existingPlant);
 }
 
+/** Delete a backup plant and write a tombstone to prevent stale data from reappearing. */
 export async function deletePlantFromPersonalBackup(plantId: string, userId: string): Promise<void> {
   const docRef = doc(personalPlantsCol(userId), plantId);
   const existing = await getDoc(docRef);
@@ -340,6 +350,7 @@ export async function deletePlantFromPersonalBackup(plantId: string, userId: str
   }, { merge: true });
 }
 
+/** Fetch backup plants and tombstones once for merge or recovery operations. */
 export async function snapshotPersonalBackup(userId: string): Promise<PersonalBackupSnapshot> {
   const [plantsSnapshot, deletedPlantsSnapshot] = await Promise.all([
     getDocs(personalPlantsCol(userId)),
@@ -360,6 +371,7 @@ export async function snapshotPersonalBackup(userId: string): Promise<PersonalBa
   };
 }
 
+/** Record that this user has disabled personal cloud backup. */
 export async function markPersonalBackupDisabled(userId: string): Promise<void> {
   await setDoc(doc(getDb(), 'users', userId), {
     personalBackupEnabled: false,

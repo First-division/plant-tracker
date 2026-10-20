@@ -25,6 +25,7 @@ const MAPPING = {
  * This ensures a consistent look across platforms, and optimal resource usage.
  * Icon `name`s are based on SF Symbols and require manual mapping to Material Icons.
  */
+/** Render the mapped Material Icon fallback for the shared cross-platform symbol API. */
 export function IconSymbol({
   name,
   size = 24,

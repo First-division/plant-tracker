@@ -1,5 +1,6 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { StyleSheet, View, TouchableOpacity, ScrollView, Image, Alert, RefreshControl, Platform, useWindowDimensions } from 'react-native';
+import { useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { ThemedText } from '@/components/themed-text';
@@ -43,7 +44,8 @@ function buildDayEventsMap(plants: Plant[], year: number, month: number): Record
   const map: Record<number, DayEvents> = {};
   const monthStart = new Date(year, month, 1);
   const monthEnd = new Date(year, month + 1, 0);
-  const todayStart = getStartOfLocalDay(new Date());
+  const referenceDate = new Date();
+  const todayStart = getStartOfLocalDay(referenceDate);
 
   const ensure = (day: number) => {
     if (!map[day]) map[day] = { completed: [], scheduled: [], history: [] };
@@ -97,7 +99,7 @@ function buildDayEventsMap(plants: Plant[], year: number, month: number): Record
 
     // 2. Scheduled (projected) events — only today or future, not already completed
     const intervalDays = parseCheckIntervalDays(plant.checkInterval);
-    const nextWaterDate = getNextWaterDate(plant, todayStart);
+    const nextWaterDate = getNextWaterDate(plant, referenceDate);
     if (!nextWaterDate || intervalDays <= 0) continue;
 
     for (let i = 0; i < 60; i++) {
@@ -135,6 +137,7 @@ const MONTH_NAMES = [
 ];
 const DAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
+/** Show recorded care events and projected watering dates with household-member context. */
 export default function CalendarScreen() {
   const { plants, waterPlant, unwaterPlant, householdEnabled, householdId, householdMembers, colorTheme, sendReminder, userName, refreshHouseholdMembers } = usePlants();
   const { user } = useAuth();
@@ -148,6 +151,13 @@ export default function CalendarScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const { height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const [undoInfo, setUndoInfo] = useState<{ plantId: string; plantName: string; entryDate: string } | null>(null);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+  }, []);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -206,10 +216,15 @@ export default function CalendarScreen() {
     try {
       const wateredAt = scheduledDate && !isSameLocalDay(new Date(scheduledDate), new Date())
         ? scheduledDate
-        : undefined;
+        : new Date().toISOString();
 
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       await waterPlant(plantId, undefined, wateredAt);
+
+      // Offer a short undo window so an accidental tap isn't permanent.
+      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+      setUndoInfo({ plantId, plantName, entryDate: wateredAt });
+      undoTimerRef.current = setTimeout(() => setUndoInfo(null), 6000);
     } catch {
       Alert.alert('Error', `Failed to water ${plantName}`);
     }
@@ -224,6 +239,14 @@ export default function CalendarScreen() {
     }
   };
 
+  const handleUndoQuickWater = async () => {
+    const info = undoInfo;
+    if (!info) return;
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    setUndoInfo(null);
+    await handleUnwater(info.plantId, info.plantName, info.entryDate);
+  };
+
   const selectedEvents: DayEvents = selectedDay
     ? dayEventsMap[selectedDay] || { completed: [], scheduled: [], history: [] }
     : { completed: [], scheduled: [], history: [] };
@@ -231,6 +254,17 @@ export default function CalendarScreen() {
     selectedEvents.completed.length > 0 ||
     selectedEvents.scheduled.length > 0 ||
     selectedEvents.history.length > 0;
+
+  const describeDay = (day: number, events: DayEvents | undefined, isTodayDay: boolean) => {
+    const label = `${MONTH_NAMES[currentMonth]} ${day}, ${currentYear}${isTodayDay ? ', today' : ''}`;
+    const watered = events?.completed.length ?? 0;
+    const scheduled = events?.scheduled.length ?? 0;
+    const parts = [
+      watered > 0 ? `${watered} watered` : '',
+      scheduled > 0 ? `${scheduled} scheduled` : '',
+    ].filter(Boolean);
+    return parts.length > 0 ? `${label}, ${parts.join(', ')}` : `${label}, no events`;
+  };
 
   const rows: (number | null)[][] = [];
   let currentRow: (number | null)[] = [];
@@ -269,13 +303,13 @@ export default function CalendarScreen() {
         <View style={styles.header}>
           <ThemedText style={styles.monthTitle}>{MONTH_NAMES[currentMonth]} {currentYear}</ThemedText>
           <View style={styles.headerRight}>
-            <TouchableOpacity onPress={goToToday} style={[styles.todayButton, { backgroundColor: theme.cardBg }]}>
+            <TouchableOpacity onPress={goToToday} style={[styles.todayButton, { backgroundColor: theme.cardBg }]} accessibilityRole="button" accessibilityLabel="Go to today">
               <ThemedText style={styles.todayButtonText}>Today</ThemedText>
             </TouchableOpacity>
-            <TouchableOpacity onPress={goToPrevMonth} style={[styles.navButton, { backgroundColor: theme.cardBg }]}>
+            <TouchableOpacity onPress={goToPrevMonth} style={[styles.navButton, { backgroundColor: theme.cardBg }]} accessibilityRole="button" accessibilityLabel="Previous month">
               <ThemedText style={styles.navButtonText}>‹</ThemedText>
             </TouchableOpacity>
-            <TouchableOpacity onPress={goToNextMonth} style={[styles.navButton, { backgroundColor: theme.cardBg }]}>
+            <TouchableOpacity onPress={goToNextMonth} style={[styles.navButton, { backgroundColor: theme.cardBg }]} accessibilityRole="button" accessibilityLabel="Next month">
               <ThemedText style={styles.navButtonText}>›</ThemedText>
             </TouchableOpacity>
           </View>
@@ -313,6 +347,24 @@ export default function CalendarScreen() {
           )}
         </View>
 
+        {plants.length === 0 && (
+          <View style={[styles.emptyCard, { backgroundColor: theme.cardBg }]}>
+            <ThemedText style={styles.emptyEmoji}>🌱</ThemedText>
+            <ThemedText style={styles.emptyTitle}>Nothing to schedule yet</ThemedText>
+            <ThemedText style={[styles.emptyBody, { color: theme.secondaryText }]}>
+              Add your first plant and its watering schedule will show up here.
+            </ThemedText>
+            <TouchableOpacity
+              style={[styles.emptyButton, { backgroundColor: theme.primary }]}
+              onPress={() => router.push('/add-plant-modal')}
+              accessibilityRole="button"
+              accessibilityLabel="Add your first plant"
+            >
+              <ThemedText style={styles.emptyButtonText}>Add a Plant</ThemedText>
+            </TouchableOpacity>
+          </View>
+        )}
+
         <View style={styles.weekRow}>
           {DAY_LABELS.map((label, i) => (
             <View key={i} style={styles.weekCell}>
@@ -329,7 +381,15 @@ export default function CalendarScreen() {
               const selected = day === selectedDay;
               const todayDay = isToday(day);
               return (
-                <TouchableOpacity key={colIndex} style={styles.dayCell} onPress={() => setSelectedDay(day)} activeOpacity={0.6}>
+                <TouchableOpacity
+                  key={colIndex}
+                  style={styles.dayCell}
+                  onPress={() => setSelectedDay(day)}
+                  activeOpacity={0.6}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  accessibilityLabel={describeDay(day, events, todayDay)}
+                >
                   <View style={[styles.dayCircle, selected && [styles.selectedDayCircle, { backgroundColor: theme.primary }], todayDay && !selected && [styles.todayDayCircle, { borderColor: theme.primary }]]}>
                     <ThemedText style={[styles.dayText, selected && styles.selectedDayText, todayDay && !selected && [styles.todayDayText, { color: theme.primary }]]}>{day}</ThemedText>
                   </View>
@@ -412,6 +472,8 @@ export default function CalendarScreen() {
                     <TouchableOpacity
                       style={styles.waterToggleDoneButton}
                       onPress={() => event.entryDate && handleUnwater(event.plant.id, event.plant.name, event.entryDate)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Undo watering for ${event.plant.name}`}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
                       <ThemedText style={styles.waterToggleButtonText}>✓</ThemedText>
@@ -465,6 +527,8 @@ export default function CalendarScreen() {
                           sendReminder(currentUserId || '', userName || '', event.ownerId!, event.plant.id, event.plant.name);
                           Alert.alert('Reminder Sent', `${event.ownerName} will be notified to water ${event.plant.name}.`);
                         }}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Remind ${event.ownerName || 'owner'} to water ${event.plant.name}`}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                       >
                         <ThemedText style={styles.remindButtonText}>Remind</ThemedText>
@@ -473,6 +537,8 @@ export default function CalendarScreen() {
                     <TouchableOpacity
                       style={styles.waterToggleButton}
                       onPress={() => handleQuickWater(event.plant.id, event.plant.name, event.scheduledDate)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Mark ${event.plant.name} as watered`}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
                       <ThemedText style={styles.waterToggleButtonText}>Water</ThemedText>
@@ -485,6 +551,20 @@ export default function CalendarScreen() {
           )}
         </View>
       </ScrollView>
+
+      {undoInfo && (
+        <View style={[styles.undoBar, { bottom: Math.max(insets.bottom + 84, 100) }]} accessibilityLiveRegion="polite">
+          <ThemedText style={styles.undoText} numberOfLines={1}>Watered {undoInfo.plantName}</ThemedText>
+          <TouchableOpacity
+            style={styles.undoButton}
+            onPress={handleUndoQuickWater}
+            accessibilityRole="button"
+            accessibilityLabel={`Undo watering ${undoInfo.plantName}`}
+          >
+            <ThemedText style={styles.undoButtonText}>Undo</ThemedText>
+          </TouchableOpacity>
+        </View>
+      )}
     </ThemedView>
     </SafeAreaView>
   );
@@ -498,9 +578,9 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 20, paddingBottom: 8 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   monthTitle: { fontSize: 28, fontWeight: '700', paddingTop: 10 },
-  todayButton: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+  todayButton: { paddingHorizontal: 14, minHeight: 44, justifyContent: 'center', borderRadius: 22 },
   todayButtonText: { fontSize: 14, fontWeight: '600' },
-  navButton: { width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center' },
+  navButton: { width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center' },
   navButtonText: { fontSize: 22, fontWeight: '300', marginTop: -2 },
   legendCard: { borderRadius: 12, padding: 14, marginBottom: 12 },
   legendTitle: { fontSize: 14, fontWeight: '600', marginBottom: 8 },
@@ -514,7 +594,7 @@ const styles = StyleSheet.create({
   weekCell: { flex: 1, alignItems: 'center', paddingVertical: 8 },
   weekLabel: { fontSize: 13, fontWeight: '600' },
   weekendLabel: { opacity: 0.5 },
-  dayCell: { flex: 1, alignItems: 'center', paddingVertical: 4, minHeight: 52 },
+  dayCell: { flex: 1, alignItems: 'center', paddingVertical: 4, minHeight: 52, minWidth: 44 },
   dayCircle: { width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center' },
   selectedDayCircle: { },
   todayDayCircle: { borderWidth: 1.5 },
@@ -556,10 +636,20 @@ const styles = StyleSheet.create({
   plantLocation: { fontSize: 13, marginTop: 2 },
   completedActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   scheduledActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  remindButton: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12 },
+  remindButton: { paddingHorizontal: 12, minHeight: 44, justifyContent: 'center', borderRadius: 22 },
   remindButtonText: { fontSize: 12, fontWeight: '600', color: '#FFF' },
-  waterToggleButton: { backgroundColor: '#007AFF', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, minWidth: 64, alignItems: 'center' },
-  waterToggleDoneButton: { backgroundColor: '#34C759', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, minWidth: 64, alignItems: 'center' },
+  waterToggleButton: { backgroundColor: '#007AFF', paddingHorizontal: 14, minHeight: 44, justifyContent: 'center', borderRadius: 16, minWidth: 64, alignItems: 'center' },
+  waterToggleDoneButton: { backgroundColor: '#34C759', paddingHorizontal: 14, minHeight: 44, justifyContent: 'center', borderRadius: 16, minWidth: 64, alignItems: 'center' },
   waterToggleButtonText: { fontSize: 14, fontWeight: '600', color: '#FFF' },
+  emptyCard: { borderRadius: 16, padding: 20, alignItems: 'center', marginBottom: 12, gap: 6 },
+  emptyEmoji: { fontSize: 36 },
+  emptyTitle: { fontSize: 17, fontWeight: '600' },
+  emptyBody: { fontSize: 14, textAlign: 'center' },
+  emptyButton: { marginTop: 8, minHeight: 44, paddingHorizontal: 22, borderRadius: 22, justifyContent: 'center' },
+  emptyButtonText: { color: '#FFF', fontWeight: '600', fontSize: 15 },
+  undoBar: { position: 'absolute', left: 16, right: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#2C2C2E', borderRadius: 14, paddingLeft: 16, paddingRight: 4, shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 6 },
+  undoText: { color: '#FFF', fontSize: 15, flex: 1 },
+  undoButton: { minHeight: 44, minWidth: 64, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 12 },
+  undoButtonText: { color: '#0A84FF', fontWeight: '700', fontSize: 15 },
   memberColorBar: { width: 4, height: 36, borderRadius: 2, marginRight: 8 },
 });

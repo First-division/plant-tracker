@@ -1,8 +1,14 @@
+/**
+ * Central application state for plant records, preferences, household sharing, and backup.
+ * Screens use this provider rather than choosing persistence services themselves.
+ */
+
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode } from 'react';
+import { Appearance } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { isFirebaseAvailable } from '@/services/firebase';
 import { HouseholdMember, createHousehold, joinHousehold, leaveHousehold, getHouseholdMembers, updateMemberColor, subscribeToHouseholdMembers } from '@/services/household';
-import { uploadLocalPlants, subscribeToPlants, syncPlantToFirestore, deletePlantFromFirestore, addWateringEntry, removeWateringEntry, clearWateringLog, snapshotPlantsFromFirestore, backfillPlantOwnership } from '@/services/plant-sync';
+import { uploadLocalPlants, subscribeToPlants, syncPlantToFirestore, deletePlantFromFirestore, addWateringEntry, appendPlantHistoryEntry, removeWateringEntry, clearWateringLog, snapshotPlantsFromFirestore, backfillPlantOwnership } from '@/services/plant-sync';
 import { HouseholdNotification, subscribeToNotifications, markNotificationRead, sendWaterReminder } from '@/services/household-notifications';
 import { DeletedPlantTombstone, deletePlantFromPersonalBackup, markPersonalBackupDisabled, PersonalBackupSnapshot, snapshotPersonalBackup, subscribeToPersonalBackup, syncPlantToPersonalBackup } from '@/services/personal-backup';
 import { ColorThemeName } from '@/constants/theme';
@@ -10,6 +16,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { clearStoredPlantPhotos, deleteStoredPlantPhoto, reconcilePlantPhotoUris } from '@/services/plant-photos';
 import { removeWateringEntriesForDay, upsertWateringEntryForDay } from '@/services/watering-log';
 
+/** Timestamped watering or other care-history event stored on a plant. */
 export type WateringEntry = {
   date: string;
   action?: string;
@@ -18,6 +25,10 @@ export type WateringEntry = {
   wateredBy?: string;
 };
 
+/** Plant gender options shown in the plant form. */
+export type PlantGender = 'Male' | 'Female' | 'They/them' | 'Other';
+
+/** Canonical plant record shared by screens and local/cloud persistence layers. */
 export type Plant = {
   id: string;
   name: string;
@@ -27,7 +38,7 @@ export type Plant = {
   location: string;
   checkInterval: string;
   birthday: string;
-  gender: 'Male' | 'Female' | 'Unknown';
+  gender: PlantGender | 'Unknown';
   wateringLog: WateringEntry[];
   createdAt: string;
   updatedAt: string;
@@ -37,6 +48,7 @@ export type Plant = {
   reminderTime?: string;
 };
 
+/** Editable plant fields accepted when creating or updating a plant. */
 export type PlantInput = Pick<
   Plant,
   | 'name'
@@ -51,6 +63,7 @@ export type PlantInput = Pick<
   | 'reminderTime'
 >;
 
+/** User appearance preference; `system` follows the device color scheme. */
 export type AppAppearance = 'light' | 'dark' | 'system';
 
 type SetHouseholdEnabledOptions = {
@@ -257,6 +270,7 @@ function mergePlantsForPersonalBackup(
   };
 }
 
+/** Load preferences and plants, synchronize active backends, and expose app operations. */
 export function PlantsProvider({ children }: { children: ReactNode }) {
   const { user: authUser } = useAuth();
   const [plants, setPlants] = useState<Plant[]>([]);
@@ -287,6 +301,10 @@ export function PlantsProvider({ children }: { children: ReactNode }) {
   const notifUnsubscribeRef = useRef<(() => void) | null>(null);
   const membersUnsubscribeRef = useRef<(() => void) | null>(null);
   const currentUserIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    Appearance.setColorScheme(appearance === 'system' ? null : appearance);
+  }, [appearance]);
 
   useEffect(() => {
     plantsRef.current = plants;
@@ -684,19 +702,7 @@ export function PlantsProvider({ children }: { children: ReactNode }) {
       if (userName) entry.wateredBy = userName;
 
       if (isFirestoreMode) {
-        const existing = plants.find((p) => p.id === id);
-        if (!existing) {
-          return;
-        }
-
-        await syncPlantToFirestore(
-          {
-            ...existing,
-            wateringLog: [...(existing.wateringLog || []), entry],
-            updatedAt: new Date().toISOString(),
-          },
-          householdId!,
-        );
+        await appendPlantHistoryEntry(id, householdId!, entry);
       } else {
         const updatedAt = new Date().toISOString();
         const updatedPlants = plants.map((p) =>
@@ -873,10 +879,10 @@ export function PlantsProvider({ children }: { children: ReactNode }) {
     await SecureStore.setItemAsync(TIMEZONE_KEY, value);
   };
 
-  const setNotificationsEnabled = async (value: boolean) => {
+  const setNotificationsEnabled = useCallback(async (value: boolean) => {
     setNotificationsEnabledState(value);
     await SecureStore.setItemAsync(NOTIFICATIONS_KEY, value.toString());
-  };
+  }, []);
 
   const setDefaultCheckInterval = async (value: string) => {
     setDefaultCheckIntervalState(value);
@@ -1085,6 +1091,7 @@ export function PlantsProvider({ children }: { children: ReactNode }) {
   return <PlantsContext.Provider value={value}>{children}</PlantsContext.Provider>;
 }
 
+/** Read plant and app settings state; throws when rendered outside `PlantsProvider`. */
 export function usePlants() {
   const context = useContext(PlantsContext);
   if (context === undefined) {

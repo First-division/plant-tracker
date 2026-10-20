@@ -2,9 +2,7 @@ import { useEffect, useState } from 'react';
 import { useColorScheme as useRNColorScheme } from 'react-native';
 import { usePlants } from '@/contexts/PlantContext';
 
-/**
- * To support static rendering, this value needs to be re-calculated on the client side for web
- */
+/** Resolve the saved/system theme after web hydration to avoid static-rendering mismatches. */
 export function useColorScheme() {
   const [hasHydrated, setHasHydrated] = useState(false);
 

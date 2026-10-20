@@ -9,6 +9,7 @@ import { usePlants } from '@/contexts/PlantContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WHATS_NEW_CONTENT } from '@/constants/whats-new';
 
+/** Display the generated release highlights shown after an app update. */
 export default function WhatsNewModal() {
   const router = useRouter();
   const insets = useSafeAreaInsets();

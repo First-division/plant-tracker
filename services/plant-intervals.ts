@@ -1,3 +1,4 @@
+/** Numeric year/month/day representation shared by plant forms and schedule calculations. */
 export type CheckIntervalParts = {
   years: number;
   months: number;
@@ -17,6 +18,7 @@ function toSafeWholeNumber(value: number): number {
   return Math.floor(value);
 }
 
+/** Clamp interval components to non-negative whole numbers. */
 export function normalizeCheckIntervalParts(parts: CheckIntervalParts): CheckIntervalParts {
   return {
     years: toSafeWholeNumber(parts.years),
@@ -25,11 +27,16 @@ export function normalizeCheckIntervalParts(parts: CheckIntervalParts): CheckInt
   };
 }
 
+/** Whether an interval contains at least one positive component. */
 export function hasCheckIntervalValue(parts: CheckIntervalParts): boolean {
   const normalized = normalizeCheckIntervalParts(parts);
   return normalized.years > 0 || normalized.months > 0 || normalized.days > 0;
 }
 
+/**
+ * Parse supported year, month, week, and day tokens; missing or unrecognized input
+ * uses the app's seven-day default.
+ */
 export function parseCheckIntervalParts(interval?: string | null): CheckIntervalParts {
   if (!interval) return { ...DEFAULT_INTERVAL_PARTS };
 
@@ -60,6 +67,7 @@ export function parseCheckIntervalParts(interval?: string | null): CheckInterval
   return normalizeCheckIntervalParts(parts);
 }
 
+/** Format interval parts as a readable string, omitting zero-valued units. */
 export function formatCheckInterval(parts: CheckIntervalParts): string {
   const normalized = normalizeCheckIntervalParts(parts);
   const segments: string[] = [];
@@ -77,11 +85,13 @@ export function formatCheckInterval(parts: CheckIntervalParts): string {
   return segments.join(' ');
 }
 
+/** Convert years and months to the app's fixed 365-day and 30-day approximations. */
 export function checkIntervalPartsToDays(parts: CheckIntervalParts): number {
   const normalized = normalizeCheckIntervalParts(parts);
   return normalized.years * 365 + normalized.months * 30 + normalized.days;
 }
 
+/** Parse a human-readable interval and return its approximate length in days. */
 export function parseCheckIntervalDays(interval: string): number {
   return checkIntervalPartsToDays(parseCheckIntervalParts(interval));
 }

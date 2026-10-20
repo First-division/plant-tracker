@@ -18,6 +18,7 @@ type Props = PropsWithChildren<{
   headerBackgroundColor: { dark: string; light: string };
 }>;
 
+/** Scroll container with an animated, theme-aware parallax header. */
 export default function ParallaxScrollView({
   children,
   headerImage,

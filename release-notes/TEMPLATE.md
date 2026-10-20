@@ -22,3 +22,4 @@ Optional alternate store blurb.
 Generator notes:
 - The `generate:whats-new` script reads `## New Features` and `## Bug Fixes` for deterministic app update content.
 - If those sections are missing, it falls back to heuristic parsing of bullets under `## Full release notes`.
+- `npm run release:testflight` regenerates the in-app What's New content before building and submitting; it does not publish this Markdown as App Store listing metadata.

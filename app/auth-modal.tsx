@@ -1,12 +1,10 @@
 import React from 'react';
 import {
-  Alert,
   StyleSheet,
   View,
   Text,
   TouchableOpacity,
   Platform,
-  useColorScheme,
   ActivityIndicator,
   ScrollView,
 } from 'react-native';
@@ -14,8 +12,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePlants } from '@/contexts/PlantContext';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { getThemeColors } from '@/constants/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+/** Present sign-in choices for account features while allowing anonymous app use. */
 export default function AuthModal() {
   const params = useLocalSearchParams<{ purpose?: string }>();
   const {
@@ -30,6 +31,7 @@ export default function AuthModal() {
     setHouseholdAuthPending,
     setPersonalBackupEnabled,
     setPersonalBackupAuthPending,
+    colorTheme,
   } = usePlants();
   const systemScheme = useColorScheme();
   const isDark = systemScheme === 'dark';
@@ -38,14 +40,17 @@ export default function AuthModal() {
   const isPersonalBackupAuth = params.purpose === 'backup';
   const completedAuthRef = React.useRef(false);
 
+  const palette = getThemeColors(colorTheme, isDark);
   const colors = {
-    bg: isDark ? '#000000' : '#F2F2F7',
-    card: isDark ? '#1C1C1E' : '#FFFFFF',
-    text: isDark ? '#FFFFFF' : '#000000',
+    bg: palette.screenBg,
+    card: isDark ? palette.cardBg : palette.lightCardBg,
+    text: palette.text,
     secondaryText: isDark ? '#8E8E93' : '#6C6C70',
   };
 
   const [loading, setLoading] = React.useState(false);
+  const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
+  const cancelledRef = React.useRef(false);
 
   const content = isPersonalBackupAuth
     ? {
@@ -77,22 +82,36 @@ export default function AuthModal() {
   }, [isHouseholdAuth, isPersonalBackupAuth, setHouseholdAuthPending, setPersonalBackupAuthPending]);
 
   const finishAuth = async () => {
-    if (isHouseholdAuth) {
-      await setHouseholdEnabled(true);
-      setHouseholdAuthPending(false);
-      completedAuthRef.current = true;
-    }
+    try {
+      if (isHouseholdAuth) {
+        await setHouseholdEnabled(true);
+        setHouseholdAuthPending(false);
+        completedAuthRef.current = true;
+      }
 
-    if (isPersonalBackupAuth) {
-      await setPersonalBackupEnabled(true);
-      setPersonalBackupAuthPending(false);
-      completedAuthRef.current = true;
+      if (isPersonalBackupAuth) {
+        await setPersonalBackupEnabled(true);
+        setPersonalBackupAuthPending(false);
+        completedAuthRef.current = true;
+      }
+    } catch (error) {
+      // Undo the half-enabled feature so the Settings switch matches reality.
+      if (isHouseholdAuth) {
+        await setHouseholdEnabled(false).catch(() => {});
+        setHouseholdAuthPending(false);
+      }
+      if (isPersonalBackupAuth) {
+        await setPersonalBackupEnabled(false).catch(() => {});
+        setPersonalBackupAuthPending(false);
+      }
+      throw error;
     }
 
     router.back();
   };
 
   const handleCancel = () => {
+    cancelledRef.current = true;
     if (isHouseholdAuth) {
       setHouseholdAuthPending(false);
       completedAuthRef.current = true;
@@ -106,58 +125,80 @@ export default function AuthModal() {
 
   const handleApple = async () => {
     setLoading(true);
+    setErrorMessage(null);
     try {
       await signInWithApple();
+      if (cancelledRef.current) return;
       await finishAuth();
     } catch (e: any) {
-      if (e.code !== 'ERR_REQUEST_CANCELED') {
+      if (e.code !== 'ERR_REQUEST_CANCELED' && !cancelledRef.current) {
         console.error('Apple sign-in error:', e);
-        Alert.alert('Apple Sign-In', e.message || 'Failed to sign in with Apple.');
+        setErrorMessage(e.message || 'Failed to sign in with Apple. Please try again.');
       }
     } finally {
-      setLoading(false);
+      if (!cancelledRef.current) setLoading(false);
     }
   };
 
   const handleGoogle = async () => {
     setLoading(true);
+    setErrorMessage(null);
     try {
       await signInWithGoogle();
+      if (cancelledRef.current) return;
       await finishAuth();
     } catch (e: any) {
-      if (e.code !== 'SIGN_IN_CANCELLED') {
+      if (e.code !== 'SIGN_IN_CANCELLED' && !cancelledRef.current) {
         console.error('Google sign-in error:', e);
-        Alert.alert('Google Sign-In', e.message || 'Failed to sign in with Google.');
+        setErrorMessage(e.message || 'Failed to sign in with Google. Please try again.');
       }
     } finally {
-      setLoading(false);
+      if (!cancelledRef.current) setLoading(false);
     }
   };
 
   const handleSkip = async () => {
     setLoading(true);
+    setErrorMessage(null);
     try {
       await signInAnonymously();
+      if (cancelledRef.current) return;
       await finishAuth();
     } catch (e: any) {
-      console.error('Anonymous sign-in error:', e);
-      Alert.alert('Share Code Only', e.message || 'Failed to continue with share code only.');
+      if (!cancelledRef.current) {
+        console.error('Anonymous sign-in error:', e);
+        setErrorMessage(e.message || 'Failed to continue with share code only. Please try again.');
+      }
     } finally {
-      setLoading(false);
+      if (!cancelledRef.current) setLoading(false);
     }
   };
 
   if (isLoading || loading) {
     return (
-      <View style={[styles.container, { backgroundColor: colors.bg }]}>
+      <View style={[styles.container, styles.loadingContainer, { backgroundColor: colors.bg }]}>
         <ActivityIndicator size="large" color="#007AFF" />
+        <Text style={[styles.loadingText, { color: colors.secondaryText }]}>Signing in…</Text>
+        <TouchableOpacity
+          style={styles.loadingCancel}
+          onPress={handleCancel}
+          accessibilityRole="button"
+          accessibilityLabel="Cancel sign in"
+        >
+          <Text style={[styles.cancelText, { color: '#007AFF' }]}>Cancel</Text>
+        </TouchableOpacity>
       </View>
     );
   }
 
   return (
     <View style={[styles.container, { backgroundColor: colors.bg }]}>
-      <TouchableOpacity style={[styles.cancelButton, { top: Math.max(insets.top, 16) }]} onPress={handleCancel}>
+      <TouchableOpacity
+        style={[styles.cancelButton, { top: Math.max(insets.top, 16) }]}
+        onPress={handleCancel}
+        accessibilityRole="button"
+        accessibilityLabel="Cancel sign in"
+      >
         <Text style={[styles.cancelText, { color: '#007AFF' }]}>Cancel</Text>
       </TouchableOpacity>
 
@@ -175,6 +216,13 @@ export default function AuthModal() {
         <Text style={[styles.subtitle, { color: colors.secondaryText }]}>
           {content.subtitle}
         </Text>
+
+        {errorMessage && (
+          <View style={styles.errorBanner} accessibilityRole="alert" accessibilityLiveRegion="assertive">
+            <Ionicons name="alert-circle" size={20} color="#FF3B30" />
+            <Text style={[styles.errorText, { color: colors.text }]}>{errorMessage}</Text>
+          </View>
+        )}
 
         {Platform.OS === 'ios' && (
           <>
@@ -369,9 +417,44 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     position: 'absolute',
-    right: 16,
-    padding: 8,
+    right: 8,
+    minHeight: 44,
+    minWidth: 44,
+    paddingHorizontal: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
     zIndex: 10,
+  },
+  loadingContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  loadingText: {
+    fontSize: 15,
+  },
+  loadingCancel: {
+    marginTop: 12,
+    minHeight: 44,
+    minWidth: 88,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    width: '100%',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FF3B30',
+    padding: 12,
+    marginBottom: 16,
+  },
+  errorText: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 19,
   },
   cancelText: {
     fontSize: 17,

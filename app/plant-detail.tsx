@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useRef } from 'react';
 import {
   StyleSheet,
   View,
@@ -6,10 +6,13 @@ import {
   TouchableOpacity,
   Image,
   Alert,
+  Modal,
   Platform,
   TextInput,
+  findNodeHandle,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -20,14 +23,22 @@ import { getThemeColors } from '@/constants/theme';
 import { getDaysUntilNextWater, getNextWaterDate } from '@/services/plant-schedule';
 import { getMostRecentWateringEntryForDay, getMostRecentWateringEntryOnOrBefore, getSortedWateringLog, getWateringEntries } from '@/services/watering-log';
 
+/** Show a plant's details and expose editing, care history, and date-specific watering actions. */
 export default function PlantDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { plants, waterPlant, addPlantHistoryEntry, unwaterPlant, clearWateringHistory, removePlant, colorTheme } = usePlants();
   const [newHistoryAction, setNewHistoryAction] = useState('');
   const [isSavingHistory, setIsSavingHistory] = useState(false);
+  const [wateringPickerMode, setWateringPickerMode] = useState<'date' | 'time' | null>(null);
+  const [wateringDate, setWateringDate] = useState(new Date());
+  const [isSavingWatering, setIsSavingWatering] = useState(false);
+  const suppressWaterPressRef = useRef(false);
+  const suppressWaterPressTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const HISTORY_COLORS = ['#4CD964', '#0A84FF', '#FF9F0A', '#AF52DE', '#FF375F', '#30B0C7'];
   const [selectedHistoryColor, setSelectedHistoryColor] = useState(HISTORY_COLORS[0]);
+  const detailScrollRef = useRef<ScrollView>(null);
+  const historyInputRef = useRef<TextInput>(null);
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const isDark = colorScheme !== 'light';
@@ -73,6 +84,15 @@ export default function PlantDetailScreen() {
   const wateredToday = !!todaysEntry;
 
   const handleWater = async () => {
+    if (suppressWaterPressRef.current) {
+      suppressWaterPressRef.current = false;
+      if (suppressWaterPressTimeoutRef.current) {
+        clearTimeout(suppressWaterPressTimeoutRef.current);
+        suppressWaterPressTimeoutRef.current = null;
+      }
+      return;
+    }
+
     try {
       if (wateredToday && todaysEntry) {
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -83,6 +103,68 @@ export default function PlantDetailScreen() {
       }
     } catch {
       Alert.alert('Error', 'Failed to update watering');
+    }
+  };
+
+  const openPastWateringPicker = () => {
+    setWateringDate(new Date());
+    setWateringPickerMode('date');
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
+  const handleWaterLongPress = () => {
+    suppressWaterPressRef.current = true;
+    if (suppressWaterPressTimeoutRef.current) {
+      clearTimeout(suppressWaterPressTimeoutRef.current);
+    }
+    openPastWateringPicker();
+  };
+
+  const handleWaterPressOut = () => {
+    if (!suppressWaterPressRef.current) {
+      return;
+    }
+
+    suppressWaterPressTimeoutRef.current = setTimeout(() => {
+      suppressWaterPressRef.current = false;
+      suppressWaterPressTimeoutRef.current = null;
+    }, 300);
+  };
+
+  const handleWateringPickerChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
+    if (event.type === 'dismissed' || !selectedDate) {
+      setWateringPickerMode(null);
+      return;
+    }
+
+    setWateringDate(selectedDate);
+    if (Platform.OS === 'ios') {
+      return;
+    }
+
+    if (wateringPickerMode === 'date') {
+      setWateringPickerMode('time');
+      return;
+    }
+
+    void saveWateringAt(selectedDate);
+  };
+
+  const saveWateringAt = async (date: Date) => {
+    if (date.getTime() > Date.now()) {
+      Alert.alert('Invalid date', 'A watering time cannot be in the future.');
+      return;
+    }
+
+    try {
+      setIsSavingWatering(true);
+      await waterPlant(plant.id, undefined, date.toISOString());
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setWateringPickerMode(null);
+    } catch {
+      Alert.alert('Error', 'Failed to save watering');
+    } finally {
+      setIsSavingWatering(false);
     }
   };
 
@@ -110,7 +192,14 @@ export default function PlantDetailScreen() {
   };
 
   const handleDelete = () => {
-    Alert.alert('Delete Plant', `Are you sure you want to delete ${plant.name}?`, [
+    const entryCount = (plant.wateringLog || []).length;
+    const sharedNote = plant.ownerId
+      ? ' If this plant is shared with a household, it is removed for everyone.'
+      : '';
+    Alert.alert(
+      `Delete ${plant.name}?`,
+      `This permanently removes the plant, its photo, its ${entryCount} history ${entryCount === 1 ? 'entry' : 'entries'}, and its watering reminders.${sharedNote} This cannot be undone.`,
+      [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
@@ -134,11 +223,69 @@ export default function PlantDetailScreen() {
   const formatTime = (date: Date) =>
     date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
+  const handleHistoryFocus = () => {
+    const inputNode = historyInputRef.current ? findNodeHandle(historyInputRef.current) : null;
+    if (!inputNode || !detailScrollRef.current) {
+      return;
+    }
+
+    detailScrollRef.current.scrollResponderScrollNativeHandleToKeyboard(inputNode, 64, true);
+  };
+
   const historyLog = getSortedWateringLog(plant.wateringLog || []).reverse();
+
+  const confirmDeleteEntry = (entry: (typeof historyLog)[number]) => {
+    const entryDate = new Date(entry.date);
+    const actionLabel = entry.action?.trim() || 'Watered';
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    Alert.alert(
+      'Delete this entry?',
+      `"${actionLabel}" on ${formatDate(entryDate)} at ${formatTime(entryDate)} will be removed from ${plant.name}'s history and the calendar. This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await unwaterPlant(plant.id, entry.date);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            } catch {
+              Alert.alert('Error', 'Failed to delete entry');
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const confirmClearHistory = () => {
+    const count = historyLog.length;
+    Alert.alert(
+      'Clear all history?',
+      `This deletes all ${count} ${count === 1 ? 'entry' : 'entries'} (waterings and notes) for ${plant.name} and removes them from the calendar. This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: `Delete ${count === 1 ? '1 entry' : `all ${count}`}`,
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await clearWateringHistory(plant.id);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            } catch {
+              Alert.alert('Error', 'Failed to clear history');
+            }
+          },
+        },
+      ],
+    );
+  };
 
   return (
     <ThemedView style={[styles.container, { backgroundColor: theme.screenBg }]}>
       <ScrollView
+        ref={detailScrollRef}
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
@@ -186,12 +333,91 @@ export default function PlantDetailScreen() {
         <TouchableOpacity
           style={[styles.waterButton, { backgroundColor: wateredToday ? theme.accent : theme.primary }]}
           onPress={handleWater}
+          onLongPress={handleWaterLongPress}
+          onPressOut={handleWaterPressOut}
+          delayLongPress={450}
           activeOpacity={0.8}
         >
           <ThemedText style={styles.waterButtonText}>
             {wateredToday ? '✓' : 'Water'}
           </ThemedText>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.pastWateringButton}
+          onPress={openPastWateringPicker}
+          accessibilityRole="button"
+          accessibilityLabel="Log a past watering"
+        >
+          <ThemedText style={[styles.pastWateringText, { color: theme.primary }]}>
+            📅 Log a past watering
+          </ThemedText>
+        </TouchableOpacity>
+
+        {Platform.OS === 'ios' && (
+          <Modal
+            visible={wateringPickerMode !== null}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setWateringPickerMode(null)}
+          >
+            <View style={styles.pickerBackdrop}>
+              <View style={[styles.pickerCard, { backgroundColor: theme.cardBg }]}>
+                <ThemedText style={[styles.pickerTitle, { color: theme.text }]}>
+                  {wateringPickerMode === 'date' ? 'When did you water it?' : 'What time?'}
+                </ThemedText>
+                {wateringPickerMode && (
+                  <DateTimePicker
+                    key={wateringPickerMode}
+                    value={wateringDate}
+                    mode={wateringPickerMode}
+                    display="spinner"
+                    maximumDate={new Date()}
+                    onChange={handleWateringPickerChange}
+                    themeVariant={isDark ? 'dark' : 'light'}
+                  />
+                )}
+                <View style={styles.pickerActions}>
+                  <TouchableOpacity
+                    style={styles.pickerAction}
+                    onPress={() => setWateringPickerMode(null)}
+                    disabled={isSavingWatering}
+                  >
+                    <ThemedText style={{ color: theme.secondaryText }}>Cancel</ThemedText>
+                  </TouchableOpacity>
+                  {wateringPickerMode === 'date' ? (
+                    <TouchableOpacity
+                      style={styles.pickerAction}
+                      onPress={() => setWateringPickerMode('time')}
+                    >
+                      <ThemedText style={{ color: theme.primary, fontWeight: '700' }}>Next</ThemedText>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.pickerAction}
+                      onPress={() => saveWateringAt(wateringDate)}
+                      disabled={isSavingWatering}
+                    >
+                      <ThemedText style={{ color: theme.primary, fontWeight: '700' }}>
+                        {isSavingWatering ? 'Saving…' : 'Save'}
+                      </ThemedText>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            </View>
+          </Modal>
+        )}
+
+        {Platform.OS === 'android' && wateringPickerMode && (
+          <DateTimePicker
+            key={wateringPickerMode}
+            value={wateringDate}
+            mode={wateringPickerMode}
+            display="default"
+            maximumDate={new Date()}
+            onChange={handleWateringPickerChange}
+          />
+        )}
 
         {/* Stats Row */}
         <View style={styles.statsRow}>
@@ -236,7 +462,9 @@ export default function PlantDetailScreen() {
           </View>
           <View style={[styles.detailRow, { borderBottomWidth: 0 }]}>
             <ThemedText style={[styles.detailLabel, { color: theme.secondaryText }]}>Gender</ThemedText>
-            <ThemedText style={[styles.detailValue, { color: theme.text }]}>{plant.gender}</ThemedText>
+            <ThemedText style={[styles.detailValue, { color: theme.text }]}>
+              {plant.gender === 'Unknown' ? 'They/them' : plant.gender}
+            </ThemedText>
           </View>
         </View>
 
@@ -247,36 +475,19 @@ export default function PlantDetailScreen() {
             {historyLog.length > 0 && (
               <TouchableOpacity
                 style={[styles.clearAllButton, { backgroundColor: destructiveBackground }]}
-                onPress={() => {
-                  Alert.alert(
-                    'Clear All History',
-                    `Are you sure you want to delete all ${historyLog.length} history entries for ${plant.name}? This cannot be undone.`,
-                    [
-                      { text: 'Cancel', style: 'cancel' },
-                      {
-                        text: 'Delete All',
-                        style: 'destructive',
-                        onPress: async () => {
-                          try {
-                            await clearWateringHistory(plant.id);
-                            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                          } catch {
-                            Alert.alert('Error', 'Failed to clear history');
-                          }
-                        },
-                      },
-                    ],
-                  );
-                }}
+                onPress={confirmClearHistory}
                 activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel={`Clear all ${historyLog.length} history entries`}
               >
-                <ThemedText style={[styles.clearAllX, { color: '#FF3B30' }]}>✕</ThemedText>
+                <ThemedText style={[styles.clearAllX, { color: '#FF3B30' }]}>Clear all ({historyLog.length})</ThemedText>
               </TouchableOpacity>
             )}
           </View>
 
           <View style={styles.historyAddRow}>
             <TextInput
+              ref={historyInputRef}
               style={[
                 styles.historyInput,
                 {
@@ -289,6 +500,7 @@ export default function PlantDetailScreen() {
               placeholderTextColor={theme.secondaryText}
               value={newHistoryAction}
               onChangeText={setNewHistoryAction}
+              onFocus={handleHistoryFocus}
               returnKeyType="done"
               onSubmitEditing={handleAddHistory}
               editable={!isSavingHistory}
@@ -345,28 +557,7 @@ export default function PlantDetailScreen() {
                     styles.historyRow,
                     index > 0 && [styles.historyRowBorder, { borderTopColor: surfaceBorderColor }],
                   ]}
-                  onLongPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-                    Alert.alert(
-                      'Delete Entry',
-                      `Remove "${actionLabel}" on ${formatDate(entryDate)} at ${formatTime(entryDate)}?`,
-                      [
-                        { text: 'Cancel', style: 'cancel' },
-                        {
-                          text: 'Delete',
-                          style: 'destructive',
-                          onPress: async () => {
-                            try {
-                              await unwaterPlant(plant.id, entry.date);
-                              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                            } catch {
-                              Alert.alert('Error', 'Failed to delete entry');
-                            }
-                          },
-                        },
-                      ],
-                    );
-                  }}
+                  onLongPress={() => confirmDeleteEntry(entry)}
                   activeOpacity={0.8}
                   delayLongPress={400}
                 >
@@ -378,6 +569,14 @@ export default function PlantDetailScreen() {
                     {entry.note && <ThemedText style={[styles.historyNote, { color: theme.secondaryText }]}>{entry.note}</ThemedText>}
                   </View>
                   <ThemedText style={styles.historyIcon}>{isWaterAction ? '💧' : '📝'}</ThemedText>
+                  <TouchableOpacity
+                    style={styles.historyDeleteButton}
+                    onPress={() => confirmDeleteEntry(entry)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Delete ${actionLabel} entry from ${formatDate(entryDate)}`}
+                  >
+                    <ThemedText style={{ color: '#FF3B30', fontSize: 16 }}>🗑️</ThemedText>
+                  </TouchableOpacity>
                 </TouchableOpacity>
               );
             })
@@ -493,6 +692,57 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
   },
+  waterButtonHint: {
+    fontSize: 12,
+    marginTop: 6,
+    textAlign: 'center',
+  },
+  pastWateringButton: {
+    alignSelf: 'center',
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  pastWateringText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  historyDeleteButton: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  historyHint: {
+    fontSize: 12,
+    marginBottom: 8,
+  },
+  pickerBackdrop: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: 24,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  pickerCard: {
+    borderRadius: 18,
+    padding: 16,
+  },
+  pickerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  pickerActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 20,
+    paddingTop: 8,
+  },
+  pickerAction: {
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+  },
   statsRow: {
     flexDirection: 'row',
     paddingHorizontal: 20,
@@ -593,18 +843,17 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   clearAllButton: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    minHeight: 32,
+    paddingHorizontal: 12,
+    borderRadius: 16,
     backgroundColor: '#FF3B30',
     justifyContent: 'center',
     alignItems: 'center',
   },
   clearAllX: {
     color: '#FFF',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
-    lineHeight: 16,
   },
   emptyHistory: {
     fontSize: 15,

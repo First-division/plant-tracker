@@ -1,3 +1,5 @@
+/** Owns Firebase-backed identity state and exposes supported sign-in methods to routes. */
+
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Platform } from 'react-native';
 import * as AppleAuthentication from 'expo-apple-authentication';
@@ -31,6 +33,7 @@ GoogleSignin.configure({
   ...(GOOGLE_WEB_CLIENT_ID ? { webClientId: GOOGLE_WEB_CLIENT_ID } : {}),
 });
 
+/** Minimal identity shape exposed to the rest of the app. */
 type AuthUser = {
   uid: string;
   displayName: string | null;
@@ -38,6 +41,7 @@ type AuthUser = {
   isAnonymous: boolean;
 };
 
+/** Authentication state and operations available through `useAuth()`. */
 type AuthContextType = {
   user: AuthUser | null;
   isAuthenticated: boolean;
@@ -56,6 +60,7 @@ async function clearLocalUser(): Promise<void> {
   await SecureStore.deleteItemAsync('LOCAL_AUTH_USER');
 }
 
+/** Subscribe to Firebase auth state and provide sign-in actions to the route tree. */
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -174,6 +179,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
+/** Read authentication state; throws when rendered outside `AuthProvider`. */
 export function useAuth() {
   const context = useContext(AuthContext);
   if (context === undefined) {

@@ -18,9 +18,13 @@ import {
   LayoutChangeEvent,
   Platform,
   InteractionManager,
+  KeyboardAvoidingView,
+  ActivityIndicator,
 } from 'react-native';
+import { Picker } from '@react-native-picker/picker';
 import { usePlants, AppAppearance } from '@/contexts/PlantContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { registerForPushNotifications } from '@/hooks/use-notifications';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import Constants from 'expo-constants';
@@ -234,6 +238,8 @@ const cpStyles = StyleSheet.create({
 });
 
 const INTERVALS = ['2 days', '5 days', '1 week', '2 weeks', '3 weeks', '1 month', '2 months', '3 months', '4 months'];
+const CUSTOM_INTERVAL_UNITS = ['days', 'weeks', 'months'] as const;
+type CustomIntervalUnit = (typeof CUSTOM_INTERVAL_UNITS)[number];
 const PRIVACY_POLICY_URL = 'https://first-division.github.io/';
 
 type AppGuideTabKey = 'adding' | 'household' | 'viewing' | 'calendar';
@@ -435,6 +441,7 @@ function getAllTimezones(): string[] {
   }
 }
 
+/** Manage appearance, reminders, backup, household options, and account settings. */
 export default function SettingsScreen() {
   const {
     userName,
@@ -507,8 +514,12 @@ export default function SettingsScreen() {
   };
 
   const [tzModalVisible, setTzModalVisible] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
   const [tzSearch, setTzSearch] = useState('');
   const [intervalModalVisible, setIntervalModalVisible] = useState(false);
+  const [customIntervalModalVisible, setCustomIntervalModalVisible] = useState(false);
+  const [customIntervalAmount, setCustomIntervalAmount] = useState(1);
+  const [customIntervalUnit, setCustomIntervalUnit] = useState<CustomIntervalUnit>('days');
   const [themeModalVisible, setThemeModalVisible] = useState(false);
   const [colorPickerVisible, setColorPickerVisible] = useState(false);
   const [colorPickerTab, setColorPickerTab] = useState<'presets' | 'custom'>('presets');
@@ -536,6 +547,62 @@ export default function SettingsScreen() {
     onSubmit: (value: string) => void;
     submitLabel: string;
   }>({ visible: false, title: '', message: '', defaultValue: '', onSubmit: () => {}, submitLabel: 'OK' });
+
+  const handleNotificationsToggle = async (enabled: boolean) => {
+    try {
+      if (!enabled) {
+        await setNotificationsEnabled(false);
+        return;
+      }
+
+      const granted = await registerForPushNotifications();
+      if (!granted) {
+        await setNotificationsEnabled(false);
+        Alert.alert(
+          'Notifications Not Allowed',
+          'To receive watering reminders, allow PlantCare notifications in your device settings.',
+          [
+            { text: 'Not Now', style: 'cancel' },
+            { text: 'Open Settings', onPress: () => void Linking.openSettings() },
+          ],
+        );
+        return;
+      }
+
+      await setNotificationsEnabled(true);
+    } catch (error) {
+      console.error('Unable to enable notifications:', error);
+      Alert.alert('Notifications', 'Could not enable notifications. Please try again.');
+    }
+  };
+
+  const openCustomIntervalPicker = () => {
+    const match = defaultCheckInterval.match(/^\s*(\d+)\s*(days?|weeks?|months?)\s*$/i);
+    if (match) {
+      setCustomIntervalAmount(Number(match[1]));
+      const unit = match[2].toLowerCase();
+      setCustomIntervalUnit(unit.startsWith('day') ? 'days' : unit.startsWith('week') ? 'weeks' : 'months');
+    } else {
+      setCustomIntervalAmount(1);
+      setCustomIntervalUnit('days');
+    }
+    setIntervalModalVisible(false);
+    setCustomIntervalModalVisible(true);
+  };
+
+  const saveCustomInterval = async () => {
+    const unit = customIntervalAmount === 1
+      ? customIntervalUnit.slice(0, -1)
+      : customIntervalUnit;
+    try {
+      await setDefaultCheckInterval(`${customIntervalAmount} ${unit}`);
+      setCustomIntervalModalVisible(false);
+    } catch (error) {
+      console.error('Unable to save the custom watering interval:', error);
+      Alert.alert('Default Watering', 'Could not save this interval. Please try again.');
+    }
+  };
+  const isCustomDefaultInterval = !INTERVALS.includes(defaultCheckInterval);
   const [promptValue, setPromptValue] = useState('');
   const showPrompt = (title: string, message: string, onSubmit: (v: string) => void, defaultValue = '', submitLabel = 'OK') => {
     setPromptValue(defaultValue);
@@ -574,6 +641,20 @@ export default function SettingsScreen() {
     : allTimezones;
   const settingsScrollRef = useRef<ScrollView>(null);
 
+  // Returning to Settings means any sign-in sheet closed; clear switches left waiting on it.
+  const authPendingRef = useRef({ backup: false, household: false });
+  authPendingRef.current = { backup: personalBackupAuthPending, household: householdAuthPending };
+  useFocusEffect(
+    useCallback(() => {
+      const timer = setTimeout(() => {
+        if (authPendingRef.current.backup) setPersonalBackupAuthPending(false);
+        if (authPendingRef.current.household) setHouseholdAuthPending(false);
+      }, 600);
+      return () => clearTimeout(timer);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []),
+  );
+
   useFocusEffect(
     useCallback(() => {
       let isCancelled = false;
@@ -608,16 +689,26 @@ export default function SettingsScreen() {
   };
 
   const handleResetData = () => {
+    if (isResetting) return;
     Alert.alert(
       'Reset All Data',
-      'This will delete all your plants, settings, and account data. This cannot be undone.',
+      'This permanently deletes all plants, photos, history, settings, and your name from this device and returns the app to first-time setup. Cloud or household copies are not deleted. This cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Reset',
+          text: 'Reset Everything',
           style: 'destructive',
           onPress: async () => {
-            await resetUserData();
+            setIsResetting(true);
+            try {
+              await resetUserData();
+            } catch (error) {
+              console.error('Reset failed:', error);
+              Alert.alert('Reset Failed', 'Some data could not be erased. Please try again.');
+              return;
+            } finally {
+              setIsResetting(false);
+            }
             // Switch to home tab, then show welcome modal after it settles
             (navigation as any).navigate('index');
             setTimeout(() => {
@@ -652,7 +743,9 @@ export default function SettingsScreen() {
       void (async () => {
         try {
           await setPersonalBackupEnabled(true);
+          setPersonalBackupAuthPending(false);
         } catch (e: any) {
+          await setPersonalBackupEnabled(false).catch(() => {});
           setPersonalBackupAuthPending(false);
           Alert.alert('Cloud Backup', e.message || 'Failed to enable cloud backup.');
         }
@@ -980,7 +1073,7 @@ export default function SettingsScreen() {
           rightElement: (
             <Switch
               value={notificationsEnabled}
-              onValueChange={setNotificationsEnabled}
+              onValueChange={(value) => void handleNotificationsToggle(value)}
               trackColor={{ false: '#767577', true: '#34C759' }}
             />
           ),
@@ -1046,12 +1139,12 @@ export default function SettingsScreen() {
                     if (!val && householdId && user) {
                       // Solo user toggling off — leave and reset household
                       Alert.alert(
-                        'Leave Household',
-                        'Turning off household sharing will delete your household since you are the only member. Your plants will be saved locally.',
+                        'Delete Household?',
+                        `You are the only member, so turning off household sharing permanently deletes "${householdName || 'this household'}" and its share code${householdCode ? ` (${householdCode})` : ''}. Nobody will be able to join it again. Your plants stay on this device.`,
                         [
                           { text: 'Cancel', style: 'cancel' },
                           {
-                            text: 'Leave & Turn Off',
+                            text: 'Delete Household & Turn Off',
                             style: 'destructive',
                             onPress: async () => {
                               try {
@@ -1174,15 +1267,18 @@ export default function SettingsScreen() {
             {renderRow({
               icon: 'exit',
               iconColor: '#FF3B30',
-              label: 'Leave Household',
+              label: householdMembers.length > 1 ? 'Leave Household' : 'Delete Household',
               onPress: () => {
+                const isOnlyMember = householdMembers.length <= 1;
                 Alert.alert(
-                  'Leave Household',
-                  'Your plants will be saved locally. If you are the last member, the household will be deleted.',
+                  isOnlyMember ? 'Delete Household?' : 'Leave Household?',
+                  isOnlyMember
+                    ? `You are the only member, so this permanently deletes "${householdName || 'this household'}" and its share code. Your plants stay on this device.`
+                    : `You will stop sharing plants with ${householdMembers.length - 1} other ${householdMembers.length - 1 === 1 ? 'member' : 'members'}. The household stays active for them, and a copy of the plants is saved on this device.`,
                   [
                     { text: 'Cancel', style: 'cancel' },
                     {
-                      text: 'Leave',
+                      text: isOnlyMember ? 'Delete Household' : 'Leave',
                       style: 'destructive',
                       onPress: async () => {
                         if (user) {
@@ -1211,9 +1307,11 @@ export default function SettingsScreen() {
         {renderRow({
           icon: 'trash',
           iconColor: colors.destructive,
-          label: 'Reset All Data',
-          onPress: handleResetData,
-          rightElement: <Ionicons name="chevron-forward" size={18} color={colors.secondaryText} />,
+          label: isResetting ? 'Resetting…' : 'Reset All Data',
+          onPress: isResetting ? undefined : handleResetData,
+          rightElement: isResetting
+            ? <ActivityIndicator color={colors.secondaryText} />
+            : <Ionicons name="chevron-forward" size={18} color={colors.secondaryText} />,
           isLast: true,
         })}
       </View>
@@ -1261,7 +1359,12 @@ export default function SettingsScreen() {
 
       {/* APP GUIDE MODAL */}
       <Modal visible={infoModalVisible} animationType="slide" presentationStyle={settingsModalPresentationStyle} statusBarTranslucent={Platform.OS === 'android'}>
-        <View style={[styles.modalContainer, { backgroundColor: colors.bg, paddingTop: androidModalTopInset }]}> 
+        <View
+          style={[
+            styles.modalContainer,
+            { backgroundColor: colors.bg, paddingTop: androidModalTopInset },
+          ]}
+        >
           <View style={[styles.modalHeader, { backgroundColor: colors.card }]}> 
             <TouchableOpacity onPress={() => setInfoModalVisible(false)}>
               <Text style={[styles.modalCancel, { color: colors.tint }]}>Close</Text>
@@ -1428,7 +1531,17 @@ export default function SettingsScreen() {
 
       {/* TIMEZONE MODAL */}
       <Modal visible={tzModalVisible} animationType="slide" presentationStyle={settingsModalPresentationStyle} statusBarTranslucent={Platform.OS === 'android'}>
-        <View style={[styles.modalContainer, { backgroundColor: colors.bg, paddingTop: androidModalTopInset }]}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 16 : 0}
+        >
+        <View
+          style={[
+            styles.modalContainer,
+            { backgroundColor: colors.bg, paddingTop: androidModalTopInset },
+          ]}
+        >
           <View style={[styles.modalHeader, { backgroundColor: colors.card }]}>
             <TouchableOpacity onPress={() => { setTzModalVisible(false); setTzSearch(''); }}>
               <Text style={[styles.modalCancel, { color: colors.tint }]}>Cancel</Text>
@@ -1471,6 +1584,7 @@ export default function SettingsScreen() {
             )}
           />
         </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* INTERVAL PICKER MODAL */}
@@ -1488,11 +1602,12 @@ export default function SettingsScreen() {
             nestedScrollEnabled
             contentContainerStyle={{ paddingBottom: modalBottomPadding }}
           >
+            <Text style={[styles.intervalSectionLabel, { color: colors.secondaryText }]}>POPULAR INTERVALS</Text>
             {INTERVALS.map((interval, index) => (
               <TouchableOpacity
                 key={interval}
                 style={[
-                  styles.tzRow,
+                  styles.intervalOptionRow,
                   { backgroundColor: colors.card, borderBottomColor: colors.separator },
                   index === INTERVALS.length - 1 && { borderBottomWidth: 0 },
                 ]}
@@ -1501,13 +1616,86 @@ export default function SettingsScreen() {
                   setIntervalModalVisible(false);
                 }}
               >
-                <Text style={[styles.tzText, { color: colors.text }]}>{interval}</Text>
+                <Text style={[styles.tzText, { color: interval === defaultCheckInterval ? colors.tint : colors.text }]}>{interval}</Text>
                 {interval === defaultCheckInterval && (
                   <Ionicons name="checkmark" size={20} color={colors.tint} />
                 )}
               </TouchableOpacity>
             ))}
+            <Text style={[styles.intervalSectionLabel, styles.customIntervalSectionLabel, { color: colors.secondaryText }]}>CUSTOM</Text>
+            <TouchableOpacity
+              style={[styles.customIntervalRow, { backgroundColor: colors.card, borderBottomColor: colors.separator }]}
+              onPress={openCustomIntervalPicker}
+            >
+              <View style={styles.customIntervalText}>
+                <Text style={[styles.tzText, { color: colors.text }]}>Custom interval</Text>
+                <Text style={[styles.customIntervalHint, { color: isCustomDefaultInterval ? colors.tint : colors.secondaryText }]}>
+                  {isCustomDefaultInterval
+                    ? `Current: ${defaultCheckInterval}`
+                    : 'Choose a number of days, weeks, or months'}
+                </Text>
+              </View>
+              <Ionicons
+                name={isCustomDefaultInterval ? 'checkmark' : 'chevron-forward'}
+                size={isCustomDefaultInterval ? 20 : 18}
+                color={isCustomDefaultInterval ? colors.tint : colors.secondaryText}
+              />
+            </TouchableOpacity>
           </ScrollView>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={customIntervalModalVisible}
+        animationType="slide"
+        presentationStyle={settingsModalPresentationStyle}
+        statusBarTranslucent={Platform.OS === 'android'}
+        onRequestClose={() => setCustomIntervalModalVisible(false)}
+      >
+        <View style={[styles.modalContainer, { backgroundColor: colors.bg, paddingTop: androidModalTopInset }]}>
+          <View style={[styles.modalHeader, { backgroundColor: colors.card }]}>
+            <TouchableOpacity onPress={() => setCustomIntervalModalVisible(false)}>
+              <Text style={[styles.modalCancel, { color: colors.tint }]}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Custom Interval</Text>
+            <TouchableOpacity onPress={() => void saveCustomInterval()}>
+              <Text style={[styles.modalCancel, { color: colors.tint, fontWeight: '600' }]}>Save</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.customIntervalPickerContent}>
+            <Text style={[styles.customIntervalPreview, { color: colors.text }]}>
+              Water every {customIntervalAmount} {customIntervalUnit.slice(0, -1)}{customIntervalAmount === 1 ? '' : 's'}
+            </Text>
+            <View style={styles.customIntervalPickers}>
+              <View style={[styles.customIntervalPicker, { backgroundColor: colors.card }]}>
+                <Picker
+                  selectedValue={customIntervalAmount}
+                  onValueChange={(value: number) => setCustomIntervalAmount(value)}
+                  style={{ color: colors.text }}
+                  itemStyle={{ color: colors.text }}
+                >
+                  {Array.from({ length: 30 }, (_, index) => index + 1).map((value) => (
+                    <Picker.Item key={value} label={String(value)} value={value} />
+                  ))}
+                </Picker>
+              </View>
+              <View style={[styles.customIntervalPicker, styles.customIntervalUnitPicker, { backgroundColor: colors.card }]}>
+                <Picker
+                  selectedValue={customIntervalUnit}
+                  onValueChange={(value: CustomIntervalUnit) => setCustomIntervalUnit(value)}
+                  style={{ color: colors.text }}
+                  itemStyle={{ color: colors.text }}
+                >
+                  {CUSTOM_INTERVAL_UNITS.map((unit) => (
+                    <Picker.Item key={unit} label={unit} value={unit} />
+                  ))}
+                </Picker>
+              </View>
+            </View>
+            <Text style={[styles.customIntervalHint, { color: colors.secondaryText }]}>
+              This becomes the default interval for new plants. Existing plant schedules won&apos;t change.
+            </Text>
+          </View>
         </View>
       </Modal>
 
@@ -1542,7 +1730,21 @@ export default function SettingsScreen() {
                   }}
                 >
                   <View style={styles.themeRowLeft}>
-                    <View style={[styles.themeCircle, { backgroundColor: theme.primary }]} />
+                    <View
+                      style={[
+                        styles.themeCircle,
+                        key === 'default'
+                          ? { borderColor: colors.separator, borderWidth: StyleSheet.hairlineWidth }
+                          : { backgroundColor: theme.primary },
+                      ]}
+                    >
+                      {key === 'default' && (
+                        <>
+                          <View style={[styles.themeCircleHalf, { backgroundColor: '#FFFFFF' }]} />
+                          <View style={[styles.themeCircleHalf, { backgroundColor: '#000000' }]} />
+                        </>
+                      )}
+                    </View>
                     <Text style={[styles.tzText, { color: colors.text }]}>{theme.label}</Text>
                   </View>
                   {key === colorTheme && (
@@ -1764,6 +1966,11 @@ export default function SettingsScreen() {
         animationType="fade"
         onRequestClose={() => setPromptConfig(p => ({ ...p, visible: false }))}
       >
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}
+        >
         <View style={styles.promptOverlay}>
           <View style={[styles.promptBox, { backgroundColor: colors.card }]}>
             <Text style={[styles.promptTitle, { color: colors.text }]}>{promptConfig.title}</Text>
@@ -1788,6 +1995,7 @@ export default function SettingsScreen() {
             </View>
           </View>
         </View>
+        </KeyboardAvoidingView>
       </Modal>
     </ScrollView>
   );
@@ -1998,6 +2206,66 @@ const styles = StyleSheet.create({
   tzText: {
     fontSize: 17,
   },
+  intervalSectionLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.7,
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 8,
+  },
+  customIntervalSectionLabel: {
+    paddingTop: 22,
+  },
+  intervalOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  customIntervalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  customIntervalText: {
+    flex: 1,
+    gap: 4,
+  },
+  customIntervalHint: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  customIntervalPickerContent: {
+    paddingTop: 28,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+  },
+  customIntervalPreview: {
+    fontSize: 20,
+    fontWeight: '600',
+    marginBottom: 18,
+  },
+  customIntervalPickers: {
+    flexDirection: 'row',
+    width: '100%',
+    gap: 12,
+  },
+  customIntervalPicker: {
+    flex: 1,
+    height: 180,
+    justifyContent: 'center',
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  customIntervalUnitPicker: {
+    flex: 1.5,
+  },
   themeRowLeft: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2007,6 +2275,11 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     borderRadius: 12,
+    flexDirection: 'row',
+    overflow: 'hidden',
+  },
+  themeCircleHalf: {
+    flex: 1,
   },
   colorSwatch: {
     width: 28,

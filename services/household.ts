@@ -1,3 +1,5 @@
+/** Firestore operations for household creation, membership, invite codes, and profiles. */
+
 import {
   collection,
   doc,
@@ -18,6 +20,7 @@ import {
 import { getDb } from './firebase';
 import { MEMBER_COLORS } from '@/constants/theme';
 
+/** A household user's public display name, membership date, and shared UI color. */
 export type HouseholdMember = {
   uid: string;
   displayName: string;
@@ -25,6 +28,7 @@ export type HouseholdMember = {
   color?: string;
 };
 
+/** Household metadata stored in Firestore and used by the share-code flow. */
 export type Household = {
   id: string;
   name: string;
@@ -45,6 +49,7 @@ function generateCode(): string {
 function householdsCol() { return collection(getDb(), 'households'); }
 function usersCol() { return collection(getDb(), 'users'); }
 
+/** Create a household and atomically associate its creator's user profile with it. */
 export async function createHousehold(
   userId: string,
   displayName: string,
@@ -85,6 +90,7 @@ export async function createHousehold(
   return { householdId, code };
 }
 
+/** Join an existing household by invite code, enforcing the six-member limit. */
 export async function joinHousehold(
   userId: string,
   displayName: string,
@@ -124,6 +130,7 @@ export async function joinHousehold(
   return { householdId, householdName: data.name };
 }
 
+/** Leave a household; when the last member leaves, remove its plant records and household. */
 export async function leaveHousehold(userId: string, householdId: string): Promise<void> {
   const householdRef = doc(householdsCol(), householdId);
   const snapshot = await getDoc(householdRef);
@@ -155,6 +162,7 @@ export async function leaveHousehold(userId: string, householdId: string): Promi
   }
 }
 
+/** Fetch household member profiles and apply fallback display names/colors. */
 export async function getHouseholdMembers(householdId: string): Promise<HouseholdMember[]> {
   const householdSnap = await getDoc(doc(householdsCol(), householdId));
   if (!householdSnap.exists()) return [];
@@ -177,10 +185,12 @@ export async function getHouseholdMembers(householdId: string): Promise<Househol
   return members;
 }
 
+/** Persist a member's chosen household color on their user profile. */
 export async function updateMemberColor(userId: string, color: string): Promise<void> {
   await setDoc(doc(usersCol(), userId), { color }, { merge: true });
 }
 
+/** Look up household metadata by a case-insensitive share code. */
 export async function getHouseholdByCode(code: string): Promise<Household | null> {
   const q = query(householdsCol(), where('code', '==', code.toUpperCase()), limit(1));
   const snapshot = await getDocs(q);
@@ -190,8 +200,8 @@ export async function getHouseholdByCode(code: string): Promise<Household | null
 }
 
 /**
- * Real-time listener for household member changes (including color updates).
- * Queries user docs by householdId so any member's profile change triggers a callback.
+ * Subscribe to member profiles, including changes made to a member's name or color.
+ * Returns the Firestore unsubscribe function.
  */
 export function subscribeToHouseholdMembers(
   householdId: string,

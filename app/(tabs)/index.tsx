@@ -5,7 +5,7 @@ import Constants from 'expo-constants';
 import { useRouter } from "expo-router";
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
-import { StyleSheet, TouchableOpacity, ActivityIndicator, Alert, View, ScrollView, Image, TextInput, InteractionManager, RefreshControl, Platform, useWindowDimensions } from "react-native";
+import { StyleSheet, TouchableOpacity, ActivityIndicator, Alert, View, ScrollView, Image, TextInput, InteractionManager, RefreshControl, Platform, KeyboardAvoidingView, useWindowDimensions, Keyboard, findNodeHandle } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from "expo-linear-gradient";
 import { usePlants } from '@/contexts/PlantContext';
@@ -14,19 +14,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import OnboardingWalkthrough from "@/components/onboarding-walkthrough";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { getThemeColors } from "@/constants/theme";
-import { parseCheckIntervalDays } from '@/services/plant-intervals';
-import { getMostRecentWateringEntryOnOrBefore, getWateringEntries } from '@/services/watering-log';
+import { getNextWaterDate, isPlantOverdue } from '@/services/plant-schedule';
 
-function snapToWaterDay(date: Date, waterDay: number | undefined): Date {
-  if (waterDay === undefined) return date;
-  const current = date.getDay();
-  const diff = (waterDay - current + 7) % 7;
-  if (diff === 0) return date;
-  const snapped = new Date(date);
-  snapped.setDate(snapped.getDate() + diff);
-  return snapped;
-}
-
+/** Show the user's plants, search/filter controls, and upcoming care reminders. */
 export default function HomeScreen() {
   const router = useRouter();
   const {
@@ -41,9 +31,12 @@ export default function HomeScreen() {
   const [locationFilter, setLocationFilter] = useState<string | null>(null);
   const [memberFilter, setMemberFilter] = useState<string | null>(null); // null = All, 'mine' = just me, or a uid
   const [refreshing, setRefreshing] = useState(false);
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
   const { height } = useWindowDimensions();
   const hasNavigatedToWelcome = useRef(false);
   const hasShownWhatsNew = useRef(false);
+  const homeScrollRef = useRef<ScrollView>(null);
+  const searchInputRef = useRef<TextInput>(null);
   const insets = useSafeAreaInsets();
 
   const colorScheme = useColorScheme();
@@ -120,47 +113,17 @@ export default function HomeScreen() {
   const currentUserId = user?.uid;
 
   const upcomingReminders = useMemo(() => {
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
+    const referenceDate = new Date();
+    const todayStart = new Date(referenceDate);
+    todayStart.setHours(0, 0, 0, 0);
     const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const results: { plant: typeof plants[0]; date: Date; dateLabel: string; dayOfMonth: string; monthShort: string; ownerId: string; ownerName: string; ownerColor: string }[] = [];
 
     for (const plant of plants) {
-      const intervalDays = parseCheckIntervalDays(plant.checkInterval);
-      const log = plant.wateringLog || [];
-      let nextWaterDate: Date;
+      const nextWaterDate = getNextWaterDate(plant, referenceDate);
+      if (!nextWaterDate) continue;
 
-      const latestWatering = getMostRecentWateringEntryOnOrBefore(getWateringEntries(log), now);
-
-      if (latestWatering) {
-        const lastWatered = new Date(latestWatering.date);
-        nextWaterDate = new Date(lastWatered);
-        nextWaterDate.setDate(nextWaterDate.getDate() + intervalDays);
-        nextWaterDate.setHours(0, 0, 0, 0);
-        if (nextWaterDate < now) nextWaterDate = new Date(now);
-      } else {
-        const start = new Date(plant.birthday);
-        if (isNaN(start.getTime())) continue;
-        const diffDays = Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-        const startMultiple = diffDays <= 0 ? 0 : Math.floor(diffDays / intervalDays);
-        for (let i = startMultiple; i < startMultiple + 10; i++) {
-          const waterDate = new Date(start);
-          waterDate.setDate(waterDate.getDate() + i * intervalDays);
-          waterDate.setHours(0, 0, 0, 0);
-          if (waterDate >= now) {
-            nextWaterDate = waterDate;
-            break;
-          }
-        }
-        if (!nextWaterDate!) continue;
-      }
-
-      // Snap to preferred day of the week (only for intervals >= 7 days)
-      if (intervalDays >= 7) {
-        nextWaterDate = snapToWaterDay(nextWaterDate, plant.waterDay);
-      }
-
-      const diff = Math.round((nextWaterDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      const diff = Math.round((nextWaterDate.getTime() - todayStart.getTime()) / (1000 * 60 * 60 * 24));
       const isOwn = !plant.ownerId || plant.ownerId === currentUserId;
       const member = householdMembers.find(m => m.uid === plant.ownerId);
       results.push({
@@ -207,22 +170,6 @@ export default function HomeScreen() {
     return Object.values(groups);
   }, [filteredPlants, isHouseholdActive, currentUserId, memberFilter, householdMembers]);
 
-  const isPlantOverdue = (plant: typeof plants[0]): boolean => {
-    const intervalDays = parseCheckIntervalDays(plant.checkInterval);
-    const log = plant.wateringLog || [];
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
-    const latestWatering = getMostRecentWateringEntryOnOrBefore(getWateringEntries(log), now);
-    if (latestWatering) {
-      const lastWatered = new Date(latestWatering.date);
-      const due = new Date(lastWatered);
-      due.setDate(due.getDate() + intervalDays);
-      due.setHours(0, 0, 0, 0);
-      return due < now;
-    }
-    return false;
-  };
-
   const unreadNotifications = useMemo(() => {
     return householdNotifications.filter(n => !n.read);
   }, [householdNotifications]);
@@ -263,6 +210,29 @@ export default function HomeScreen() {
     })();
   }, [appVersionTag, hasCompletedOnboarding, isLoading, router, showWalkthrough]);
 
+  const scrollSearchAboveKeyboard = () => {
+    const inputNode = searchInputRef.current ? findNodeHandle(searchInputRef.current) : null;
+    if (!inputNode || !homeScrollRef.current) {
+      return;
+    }
+
+    homeScrollRef.current.scrollResponderScrollNativeHandleToKeyboard(inputNode, 64, true);
+  };
+
+  useEffect(() => {
+    const keyboardShowSub = Keyboard.addListener('keyboardDidShow', () => {
+      if (isSearchFocused) {
+        InteractionManager.runAfterInteractions(() => {
+          scrollSearchAboveKeyboard();
+        });
+      }
+    });
+
+    return () => {
+      keyboardShowSub.remove();
+    };
+  }, [isSearchFocused]);
+
   const getTimeBasedGreeting = () => {
     const hour = new Date().getHours();
     if (hour < 12) return "Good morning";
@@ -291,16 +261,24 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.screenBg }]} edges={['top']}>
     <ThemedView style={[styles.container, { backgroundColor: theme.screenBg }]}>
+      <KeyboardAvoidingView
+        style={styles.keyboardAvoidingContainer}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
+      >
       <TouchableOpacity
         ref={addButtonRef}
         style={[styles.addButton, { backgroundColor: theme.accent }]}
         activeOpacity={0.8}
         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        accessibilityRole="button"
+        accessibilityLabel="Add plant"
         onPress={handleAddPlant}>
         <ThemedText style={styles.addButtonText}>+</ThemedText>
       </TouchableOpacity>
       
       <ScrollView
+        ref={homeScrollRef}
         style={styles.scrollContent}
         contentContainerStyle={[
           styles.scrollContentContainer,
@@ -312,6 +290,7 @@ export default function HomeScreen() {
         showsVerticalScrollIndicator={false}
         nestedScrollEnabled
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -355,6 +334,8 @@ export default function HomeScreen() {
                 <View style={styles.notifCardActions}>
                   <TouchableOpacity
                     style={[styles.notifBtn, { backgroundColor: theme.accent }]}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Water ${n.plantName} now`}
                     onPress={() => {
                       const plant = plants.find(p => p.id === n.plantId);
                       if (plant) waterPlant(plant.id);
@@ -365,6 +346,8 @@ export default function HomeScreen() {
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.notifDismissBtn}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Dismiss reminder for ${n.plantName}`}
                     onPress={() => dismissNotification(n.id)}
                   >
                     <ThemedText style={styles.notifDismissText}>✕</ThemedText>
@@ -377,21 +360,58 @@ export default function HomeScreen() {
 
         {/* Search Bar */}
         <View style={styles.searchContainer}>
+          <View style={styles.searchRow}>
           <TextInput
-            style={[styles.searchInput, { backgroundColor: theme.cardBg, color: theme.text }]}
+            ref={searchInputRef}
+            style={[styles.searchInput, styles.searchInputFlex, { backgroundColor: theme.cardBg, color: theme.text }]}
             placeholder="Search plants..."
             placeholderTextColor={theme.secondaryText}
             value={searchQuery}
             onChangeText={setSearchQuery}
+            onFocus={() => {
+              setIsSearchFocused(true);
+              InteractionManager.runAfterInteractions(() => {
+                scrollSearchAboveKeyboard();
+              });
+            }}
+            onBlur={() => setIsSearchFocused(false)}
+            returnKeyType="done"
+            blurOnSubmit
+            onSubmitEditing={() => Keyboard.dismiss()}
+            accessibilityLabel="Search plants"
           />
+          {isSearchFocused && (
+            <TouchableOpacity
+              style={styles.searchDoneButton}
+              onPress={() => Keyboard.dismiss()}
+              accessibilityRole="button"
+              accessibilityLabel="Hide keyboard"
+            >
+              <ThemedText style={{ color: theme.accent, fontWeight: '600', fontSize: 16 }}>Done</ThemedText>
+            </TouchableOpacity>
+          )}
+          </View>
+          {searchQuery.length > 0 && (
+            <TouchableOpacity
+              style={[styles.searchClearButton, isSearchFocused && { right: 58 }]}
+              onPress={() => setSearchQuery('')}
+              accessibilityRole="button"
+              accessibilityLabel="Clear search"
+            >
+              <ThemedText style={{ color: theme.secondaryText, fontSize: 16 }}>✕</ThemedText>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Location Filter */}
         {locations.length > 1 && (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow} contentContainerStyle={styles.filterRowContent} nestedScrollEnabled>
             <TouchableOpacity
-              style={[styles.filterChip, !locationFilter && { backgroundColor: theme.accent }]}
+              style={[styles.filterChip, { backgroundColor: theme.cardBg }, !locationFilter && { backgroundColor: theme.accent }]}
               onPress={() => setLocationFilter(null)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: !locationFilter }}
+              accessibilityLabel="All locations"
             >
               <ThemedText style={[styles.filterChipText, { color: theme.secondaryText }, !locationFilter && styles.filterChipTextActive]}>All</ThemedText>
             </TouchableOpacity>
@@ -400,8 +420,11 @@ export default function HomeScreen() {
                 key={loc}
                 style={[styles.filterChip, { backgroundColor: theme.cardBg }, locationFilter === loc && { backgroundColor: theme.accent }]}
                 onPress={() => setLocationFilter(locationFilter === loc ? null : loc)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: locationFilter === loc }}
+                accessibilityLabel={`Location ${loc}`}
               >
-                <ThemedText style={[styles.filterChipText, { color: theme.secondaryText }, locationFilter === loc && styles.filterChipTextActive]}>{loc}</ThemedText>
+                <ThemedText numberOfLines={1} style={[styles.filterChipText, { color: theme.secondaryText }, locationFilter === loc && styles.filterChipTextActive]}>{loc}</ThemedText>
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -412,12 +435,18 @@ export default function HomeScreen() {
             <TouchableOpacity
               style={[styles.filterChip, { backgroundColor: theme.cardBg }, !memberFilter && { backgroundColor: theme.accent }]}
               onPress={() => setMemberFilter(null)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: !memberFilter }}
+              accessibilityLabel="All members"
             >
               <ThemedText style={[styles.filterChipText, { color: theme.secondaryText }, !memberFilter && styles.filterChipTextActive]}>All</ThemedText>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.filterChip, { backgroundColor: theme.cardBg }, memberFilter === 'mine' && { backgroundColor: theme.accent }]}
               onPress={() => setMemberFilter(memberFilter === 'mine' ? null : 'mine')}
+              accessibilityRole="button"
+              accessibilityState={{ selected: memberFilter === 'mine' }}
+              accessibilityLabel="My plants"
             >
               <ThemedText style={[styles.filterChipText, { color: theme.secondaryText }, memberFilter === 'mine' && styles.filterChipTextActive]}>Mine</ThemedText>
             </TouchableOpacity>
@@ -426,10 +455,13 @@ export default function HomeScreen() {
                 key={m.uid}
                 style={[styles.filterChip, { backgroundColor: theme.cardBg }, memberFilter === m.uid && { backgroundColor: m.color || theme.accent }]}
                 onPress={() => setMemberFilter(memberFilter === m.uid ? null : m.uid)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: memberFilter === m.uid }}
+                accessibilityLabel={`${m.displayName}'s plants`}
               >
                 <View style={styles.memberChipRow}>
                   <View style={[styles.memberChipDot, { backgroundColor: m.color || '#007AFF' }]} />
-                  <ThemedText style={[styles.filterChipText, { color: theme.secondaryText }, memberFilter === m.uid && styles.filterChipTextActive]}>{m.displayName}</ThemedText>
+                  <ThemedText numberOfLines={1} style={[styles.filterChipText, { color: theme.secondaryText }, memberFilter === m.uid && styles.filterChipTextActive]}>{m.displayName}</ThemedText>
                 </View>
               </TouchableOpacity>
             ))}
@@ -481,6 +513,14 @@ export default function HomeScreen() {
         {myPlants.length === 0 && (searchQuery || locationFilter) && (
           <View style={styles.emptyFilter}>
             <ThemedText style={[styles.emptyFilterText, { color: theme.secondaryText }]}>No plants match your search</ThemedText>
+            <TouchableOpacity
+              style={[styles.clearFiltersButton, { backgroundColor: theme.accent }]}
+              onPress={() => { setSearchQuery(''); setLocationFilter(null); }}
+              accessibilityRole="button"
+              accessibilityLabel="Clear search and filters"
+            >
+              <ThemedText style={styles.clearFiltersText}>Clear {searchQuery && locationFilter ? 'search & filter' : searchQuery ? 'search' : 'filter'}</ThemedText>
+            </TouchableOpacity>
           </View>
         )}
         {myPlants.map((item) => (
@@ -488,6 +528,8 @@ export default function HomeScreen() {
             key={item.id}
             activeOpacity={0.85}
             onPress={() => handlePlantTap(item.id)}
+            accessibilityRole="button"
+            accessibilityLabel={`${item.name}, ${item.location}. Water every ${item.checkInterval}`}
           >
             <LinearGradient
               colors={['rgba(255, 255, 255, 0.6)', 'rgba(0, 132, 255, 0.2)', 'rgba(255, 182, 222, 0.2)']}
@@ -554,6 +596,8 @@ export default function HomeScreen() {
                           {overdue && (
                             <TouchableOpacity
                               style={[styles.remindBtn, { backgroundColor: theme.primary }]}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Remind ${group.ownerName} to water ${item.name}`}
                               onPress={() => {
                                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                                 sendReminder(currentUserId || '', userName || '', group.ownerId, item.id, item.name);
@@ -587,6 +631,7 @@ export default function HomeScreen() {
           onComplete={setWalkthroughCompleted}
         />
       )}
+      </KeyboardAvoidingView>
     </ThemedView>
     </SafeAreaView>
   );
@@ -598,6 +643,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
 
+  keyboardAvoidingContainer: {
+    flex: 1,
+  },
+
   scrollContent: {
     flex: 1,
   },
@@ -606,7 +655,49 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  searchInputFlex: {
+    flex: 1,
+  },
+
+  searchDoneButton: {
+    minHeight: 44,
+    minWidth: 52,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 6,
+  },
+
+  searchClearButton: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  clearFiltersButton: {
+    marginTop: 14,
+    minHeight: 44,
+    paddingHorizontal: 20,
+    borderRadius: 22,
+    justifyContent: 'center',
+  },
+
+  clearFiltersText: {
+    color: '#FFF',
+    fontWeight: '600',
+    fontSize: 15,
+  },
+
   searchInput: {
+    paddingRight: 44,
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 10,
@@ -614,18 +705,21 @@ const styles = StyleSheet.create({
   },
 
   filterRow: {
-    marginBottom: 16,
-    maxHeight: 36,
+    marginBottom: 12,
+    flexGrow: 0,
   },
 
   filterRowContent: {
     gap: 8,
+    paddingRight: 20,
   },
 
   filterChip: {
     paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 16,
+    minHeight: 44,
+    justifyContent: 'center',
+    borderRadius: 22,
+    maxWidth: 220,
   },
 
   filterChipActive: {
@@ -912,8 +1006,9 @@ const styles = StyleSheet.create({
 
   notifBtn: {
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
+    minHeight: 44,
+    justifyContent: 'center',
+    borderRadius: 22,
   },
 
   notifBtnText: {
@@ -923,9 +1018,9 @@ const styles = StyleSheet.create({
   },
 
   notifDismissBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: 'rgba(128,128,128,0.15)',
     justifyContent: 'center',
     alignItems: 'center',
@@ -947,9 +1042,10 @@ const styles = StyleSheet.create({
   },
 
   remindBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 10,
+    paddingHorizontal: 12,
+    minHeight: 44,
+    justifyContent: 'center',
+    borderRadius: 22,
   },
 
   remindBtnText: {

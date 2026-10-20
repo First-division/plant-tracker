@@ -1,3 +1,5 @@
+/** Keeps local watering reminders and incoming household reminder alerts in sync with app state. */
+
 import { useEffect, useRef } from 'react';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
@@ -57,7 +59,8 @@ function getNextWaterDate(plant: Plant): Date {
   return next;
 }
 
-async function registerForPushNotifications(): Promise<boolean> {
+/** Ask for notification permission when needed and configure Android's reminder channel. */
+export async function registerForPushNotifications(): Promise<boolean> {
   const { status: existingStatus } = await Notifications.getPermissionsAsync();
   let finalStatus = existingStatus;
 
@@ -122,13 +125,21 @@ async function scheduleWateringNotifications(plants: Plant[]) {
   }
 }
 
+/** Reschedule local reminders when enabled plant data changes. */
 export function useWateringNotifications() {
-  const { plants, notificationsEnabled, householdNotifications } = usePlants();
+  const {
+    plants,
+    notificationsEnabled,
+    setNotificationsEnabled,
+    householdNotifications,
+    hasCompletedOnboarding,
+  } = usePlants();
   const hasRegistered = useRef(false);
   const shownReminderIds = useRef(new Set<string>());
 
   useEffect(() => {
-    if (!notificationsEnabled) {
+    // New installs are asked for permission by the welcome flow, not at launch.
+    if (!notificationsEnabled || !hasCompletedOnboarding) {
       Notifications.cancelAllScheduledNotificationsAsync();
       return;
     }
@@ -136,19 +147,24 @@ export function useWateringNotifications() {
     const setup = async () => {
       if (!hasRegistered.current) {
         const granted = await registerForPushNotifications();
-        if (!granted) return;
+        if (!granted) {
+          await setNotificationsEnabled(false);
+          return;
+        }
         hasRegistered.current = true;
       }
 
       await scheduleWateringNotifications(plants);
     };
 
-    setup();
-  }, [plants, notificationsEnabled]);
+    void setup().catch((error) => {
+      console.error('Unable to configure watering notifications:', error);
+    });
+  }, [plants, notificationsEnabled, setNotificationsEnabled, hasCompletedOnboarding]);
 
   // Trigger local push for incoming household reminders
   useEffect(() => {
-    if (!notificationsEnabled) return;
+    if (!notificationsEnabled || !hasCompletedOnboarding) return;
     for (const notif of householdNotifications) {
       if (!notif.read && !shownReminderIds.current.has(notif.id)) {
         shownReminderIds.current.add(notif.id);
@@ -162,5 +178,5 @@ export function useWateringNotifications() {
         });
       }
     }
-  }, [householdNotifications, notificationsEnabled]);
+  }, [householdNotifications, notificationsEnabled, hasCompletedOnboarding]);
 }

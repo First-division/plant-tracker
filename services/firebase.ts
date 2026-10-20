@@ -1,3 +1,8 @@
+/**
+ * Shared Firebase JavaScript SDK initialization for authentication, Firestore, and Storage.
+ * The JS SDK avoids requiring Firebase native modules in Expo Go or development builds.
+ */
+
 // Firebase JS SDK — pure JavaScript, no native modules needed.
 // Works with Expo Go, dev builds, and the new architecture.
 
@@ -38,6 +43,7 @@ function getAppInstance(): FirebaseApp {
   return _app;
 }
 
+/** Return the lazily initialized Firestore client. */
 export function getDb(): Firestore {
   if (!_db) {
     _db = _getFirestore(getAppInstance());
@@ -45,6 +51,7 @@ export function getDb(): Firestore {
   return _db;
 }
 
+/** Return Firebase Auth configured to persist sessions in React Native storage. */
 export function getAuth(): Auth {
   if (!_auth) {
     _auth = initializeAuth(getAppInstance(), {
@@ -54,6 +61,7 @@ export function getAuth(): Auth {
   return _auth;
 }
 
+/** Return the lazily initialized Firebase Storage client. */
 export function getStorageService(): FirebaseStorage {
   if (!_storage) {
     _storage = _getStorage(getAppInstance());
@@ -61,7 +69,7 @@ export function getStorageService(): FirebaseStorage {
   return _storage;
 }
 
-// Firebase JS SDK is always available — no native modules needed.
+/** Report SDK availability; Firebase is always available through its JavaScript SDK. */
 export function isFirebaseAvailable(): boolean {
   return true;
 }
