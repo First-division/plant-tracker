@@ -242,7 +242,17 @@ const CUSTOM_INTERVAL_UNITS = ['days', 'weeks', 'months'] as const;
 type CustomIntervalUnit = (typeof CUSTOM_INTERVAL_UNITS)[number];
 const PRIVACY_POLICY_URL = 'https://first-division.github.io/';
 
-type AppGuideTabKey = 'adding' | 'household' | 'viewing' | 'calendar';
+type AppGuideTabKey =
+  | 'adding'
+  | 'watering'
+  | 'reminders'
+  | 'household'
+  | 'viewing'
+  | 'calendar'
+  | 'history'
+  | 'backup'
+  | 'appearance'
+  | 'data';
 
 type AppGuideTopic = {
   key: AppGuideTabKey;
@@ -266,6 +276,8 @@ const APP_GUIDE_TOPICS: AppGuideTopic[] = [
         title: 'What You Can Add',
         items: [
           'Give each plant a name, room, birthday, photo, and reminder time so the record is easy to recognize later.',
+          'Tap Take Photo to snap a picture, or Choose from Camera Roll to use a photo that is already on your phone. Remove photo clears it again.',
+          'Pick the birthday from the date picker; it cannot be in the future.',
           'Set the watering interval with years, months, and days so the schedule fits each plant instead of forcing a one-size-fits-all rule.',
           'Choose a preferred watering day for longer schedules if you want weekly care to land on the same weekday.',
         ],
@@ -276,6 +288,7 @@ const APP_GUIDE_TOPICS: AppGuideTopic[] = [
           'Use clear names like Front Porch Fern or Kitchen Pothos so reminders make sense at a glance.',
           'Add a photo when you can, especially in a household, so everyone knows which plant they are looking at.',
           'Keep the location specific enough that family members can find the plant without guessing.',
+          'If you close the form with unsaved changes, the app asks before discarding them.',
         ],
       },
       {
@@ -283,6 +296,67 @@ const APP_GUIDE_TOPICS: AppGuideTopic[] = [
         items: [
           'Default Watering in Settings pre-fills new plants to save time when many plants follow the same schedule.',
           'You can still adjust every plant before saving, so defaults speed things up without locking you in.',
+        ],
+      },
+    ],
+  },
+  {
+    key: 'watering',
+    label: 'Watering',
+    title: 'Logging Watering',
+    intro: 'There are a few quick ways to record watering, including for days you forgot to log it.',
+    sections: [
+      {
+        title: 'Water Today',
+        items: [
+          'Open a plant and tap Water to log watering for right now. The button turns into a check mark.',
+          'Tap the check mark again to undo today\u2019s watering.',
+        ],
+      },
+      {
+        title: 'Water on a Different Day',
+        items: [
+          'Press and hold the Water button to choose the date and time you actually watered the plant.',
+          'Prefer a button? Tap Other date next to Water to do the same thing.',
+          'Backdated waterings appear on the Calendar and move the next reminder on the Home screen.',
+        ],
+      },
+      {
+        title: 'Calendar Shortcuts',
+        items: [
+          'Tap Water on a scheduled item in the Calendar to log it without opening the plant.',
+          'A short Undo bar appears after a quick watering in case you tapped by mistake.',
+        ],
+      },
+    ],
+  },
+  {
+    key: 'reminders',
+    label: 'Reminders',
+    title: 'Reminders & Notifications',
+    intro: 'PlantCare can notify you when a plant is due so watering never slips by.',
+    sections: [
+      {
+        title: 'Turning Notifications On',
+        items: [
+          'The welcome tour asks if you want reminders. Turn On also enables the iPhone/Android permission for the app.',
+          'You can change this any time in Settings → Preferences → Notifications. If the system permission was denied, the app points you to the phone Settings to allow it.',
+        ],
+      },
+      {
+        title: 'Schedules and Timing',
+        items: [
+          'Each plant has its own watering interval (days, weeks, or months) and a reminder time you choose when adding or editing it.',
+          'Default Watering in Settings pre-fills the interval for new plants, including a custom value.',
+          'Time Zone in Settings controls when reminders fire and how dates are shown. Change it if you travel or move.',
+          'Logging a watering, including a past one, moves the next due date forward automatically.',
+        ],
+      },
+      {
+        title: 'Household Reminders',
+        items: [
+          'In a household, tap Remind on a family member\u2019s plant to send them an in-app nudge to water it.',
+          'Reminders you receive show on the Home screen. Tap the \u2715 to dismiss one.',
         ],
       },
     ],
@@ -318,6 +392,21 @@ const APP_GUIDE_TOPICS: AppGuideTopic[] = [
         ],
       },
       {
+        title: 'Members, Colors, and Limits',
+        items: [
+          'A household holds up to 6 members. Create one to get a share code, or Join with a code from someone else.',
+          'Pick My Calendar Color in Settings so your waterings and plants stand out from everyone else\u2019s.',
+          'Household sharing and personal cloud backup are mutually exclusive: the household already syncs your plants, so turn one off to use the other.',
+        ],
+      },
+      {
+        title: 'Leaving vs Deleting',
+        items: [
+          'When other members are in the household, Leave Household removes only you; the household and its plants stay for them.',
+          'If you are the only member, the option becomes Delete Household, which removes it entirely and asks you to confirm.',
+        ],
+      },
+      {
         title: 'Which Option to Choose',
         items: [
           'Choose Google or Apple if you want the safest long-term household setup and easier account recovery.',
@@ -336,16 +425,16 @@ const APP_GUIDE_TOPICS: AppGuideTopic[] = [
         title: 'Home Screen Basics',
         items: [
           'Tap the + button in the top-right to open Add Plant and create a new plant card.',
-          'Use the Search bar and filter chips to narrow by plant name, location, or household member.',
+          'Use the Search bar and filter chips to narrow by plant name, location, or household member. Tap Done, press Return, or drag the list to put the keyboard away.',
           'Tap any plant card to open Plant Detail where you can water, edit, delete, or add history events.',
         ],
       },
       {
         title: 'Plant Detail Elements',
         items: [
-          'Use the Water button to log watering for today, or tap again to undo today’s watering.',
+          'Use the Water button to log watering for today, or tap again to undo today’s watering. Press and hold Water, or tap Other date, to log a past watering.',
           'In the History section, enter an action like Trimmed, Moved, or Fertilized, pick a preset dot color, then tap Add.',
-          'Long-press any history row to delete that single entry, or use the X in the header to clear all history for that plant.',
+          'Tap the trash icon on a history row (or long-press it) to delete that entry, or use Clear all in the header to remove every entry for that plant.',
         ],
       },
       {
@@ -394,6 +483,118 @@ const APP_GUIDE_TOPICS: AppGuideTopic[] = [
           'If calendar dots feel noisy, standardize your history colors by action type (for example: prune = orange, move = blue).',
           'Keep reminder intervals realistic and update plant schedules when seasons change for better projections.',
           'Use History actions consistently so Calendar becomes a reliable care timeline, not just a reminder board.',
+        ],
+      },
+    ],
+  },
+  {
+    key: 'history',
+    label: 'History & Notes',
+    title: 'History & Notes',
+    intro: 'Keep a care log for every plant beyond watering.',
+    sections: [
+      {
+        title: 'Logging Events',
+        items: [
+          'On Plant Detail, type an action such as Trimmed, Repotted, or Fertilized, choose a dot color, and tap Add.',
+          'Each entry appears on the Calendar in the color you chose, so you can see your care timeline at a glance.',
+        ],
+      },
+      {
+        title: 'Fixing Mistakes',
+        items: [
+          'Tap the trash icon on a history row (or long-press it) to delete one entry. The app asks you to confirm.',
+          'Clear all removes every entry for that plant and tells you how many will be deleted first.',
+          'Deleting a plant also deletes its history, photos, and reminders, and the app warns you before it does.',
+        ],
+      },
+    ],
+  },
+  {
+    key: 'backup',
+    label: 'Backup & Restore',
+    title: 'Backup & Restore',
+    intro: 'Cloud Backup keeps a copy of your plants online so a new phone or reinstall does not mean starting over.',
+    sections: [
+      {
+        title: 'Turning It On',
+        items: [
+          'Go to Settings → Account → Cloud Backup and sign in with Google or Apple. Share Code Only accounts are not used for personal backup because they are hard to recover.',
+          'Once on, changes upload automatically. Use Sync Backup Now to compare and upload right away.',
+        ],
+      },
+      {
+        title: 'Restoring Your Plants',
+        items: [
+          'On a new or reset device, sign in with the same account. If the cloud copy has plants and the device has none, the app asks "Restore your plants?".',
+          'You can also tap Already backed up? on the first welcome screen, or use Settings → Cloud Backup → Restore from Backup at any time.',
+          'Restore keeps plants already on the device and uses the newest version of each plant. It never uploads an empty list over your backup.',
+        ],
+      },
+      {
+        title: 'Good to Know',
+        items: [
+          'Plant details, schedules, and watering history are backed up. Photos are backed up too, as reduced-size copies, and come back when you restore. Restored photos are smaller than the originals.',
+          'Your name and display settings are stored on the device, so you may be asked for your name again after a restore.',
+          'Turning backup off keeps your plants on the device and leaves the cloud copy in place for next time.',
+        ],
+      },
+    ],
+  },
+  {
+    key: 'appearance',
+    label: 'Themes',
+    title: 'Themes & Appearance',
+    intro: 'Make the app match your style.',
+    sections: [
+      {
+        title: 'Light, Dark, and System',
+        items: [
+          'Settings → Appearance → Theme switches between Light, Dark, and System, which follows your phone.',
+        ],
+      },
+      {
+        title: 'Color Themes',
+        items: [
+          'Color Theme changes the accent color and backgrounds. Choose from Default, Forest, Ocean, Sunset, Lavender, Rose, Pink, or Orange (orange and black).',
+          'Every screen, including sign-in, the welcome tour, and modals, follows the theme you pick.',
+        ],
+      },
+      {
+        title: 'Text and Accessibility',
+        items: [
+          'Buttons have screen-reader labels, and the app respects your phone\u2019s larger text sizes.',
+        ],
+      },
+    ],
+  },
+  {
+    key: 'data',
+    label: 'Data & Privacy',
+    title: 'Your Data, Privacy & Troubleshooting',
+    intro: 'Where your information lives and what to do when something looks off.',
+    sections: [
+      {
+        title: 'Where Data Is Stored',
+        items: [
+          'Plants and settings are stored securely on your device. Cloud Backup and Households additionally store plant data in your account.',
+          'Read the Privacy Policy under Settings → About for the full details.',
+        ],
+      },
+      {
+        title: 'Reset All Data',
+        items: [
+          'Settings → Data → Reset All Data erases plants, history, photos, and preferences from this device and shows progress while it works.',
+          'It does not delete your cloud backup or any household. You can restore from the backup after signing in again.',
+        ],
+      },
+      {
+        title: 'Troubleshooting',
+        items: [
+          'Backup says permission denied or fails: check your internet connection, then try Sync Backup Now. Your plants are safe on the device.',
+          'Not getting reminders: check Settings → Notifications and that notifications are allowed for the app in your phone Settings.',
+          'Sign-in switch seems stuck: use Cancel on the sign-in screen and try again.',
+          'A plant\u2019s photo is missing after a restore: add it again from the plant\u2019s Edit screen.',
         ],
       },
     ],
@@ -460,6 +661,7 @@ export default function SettingsScreen() {
     setPersonalBackupEnabled,
     setPersonalBackupAuthPending,
     syncPersonalBackupNow,
+    restoreFromPersonalBackup,
     householdEnabled,
     householdAuthPending,
     setHouseholdAuthPending,
@@ -800,9 +1002,43 @@ export default function SettingsScreen() {
         await syncPersonalBackupNow();
         Alert.alert('Cloud Backup', 'Your local plants were compared with your cloud backup and any newer local changes were uploaded.');
       } catch (e: any) {
-        Alert.alert('Cloud Backup', e.message || 'Failed to sync your backup right now.');
+        const isPermissionError = e?.code === 'permission-denied' || /insufficient permissions/i.test(e?.message ?? '');
+        Alert.alert(
+          'Cloud Backup',
+          isPermissionError
+            ? 'The server rejected the backup (permission denied). Your data is safe on this device. This is a Firebase security-rules setting that needs to allow signed-in users to write to their own backup.'
+            : e?.message || 'Failed to sync your backup right now.',
+        );
       }
     })();
+  };
+
+  const handleRestoreFromBackup = () => {
+    Alert.alert(
+      'Restore from Backup',
+      'This brings plants from your cloud backup back to this device. Plants already here are kept, and the newest version of each plant wins.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Restore',
+          onPress: () => {
+            void (async () => {
+              try {
+                const { restored, total } = await restoreFromPersonalBackup();
+                const message = total === 0
+                  ? 'Your cloud backup has no plants yet.'
+                  : restored === 0
+                    ? `Everything is already on this device (${total} ${total === 1 ? 'plant' : 'plants'}).`
+                    : `Restored ${restored} ${restored === 1 ? 'plant' : 'plants'}. You now have ${total} on this device.`;
+                Alert.alert('Restore from Backup', message);
+              } catch (e: any) {
+                Alert.alert('Restore from Backup', e?.message || 'Could not restore from your backup right now.');
+              }
+            })();
+          },
+        },
+      ],
+    );
   };
 
   const formatTimezone = (tz: string) => tz.replace(/_/g, ' ');
@@ -847,7 +1083,15 @@ export default function SettingsScreen() {
       <View style={styles.rowRight}>
         {rightElement ?? (
           <>
-            {value && <Text style={[styles.rowValue, { color: colors.secondaryText }]}>{value}</Text>}
+            {value && (
+              <Text
+                style={[styles.rowValue, { color: colors.secondaryText }]}
+                numberOfLines={1}
+                ellipsizeMode="middle"
+              >
+                {value}
+              </Text>
+            )}
             {onPress && <Ionicons name="chevron-forward" size={18} color={colors.secondaryText} />}
           </>
         )}
@@ -997,6 +1241,13 @@ export default function SettingsScreen() {
           iconColor: '#34C759',
           label: 'Sync Backup Now',
           onPress: handleSyncBackupNow,
+          isLast: false,
+        })}
+        {showBackupSyncRow && renderRow({
+          icon: 'cloud-download',
+          iconColor: '#007AFF',
+          label: 'Restore from Backup',
+          onPress: handleRestoreFromBackup,
           isLast: true,
         })}
       </View>
@@ -1733,14 +1984,14 @@ export default function SettingsScreen() {
                     <View
                       style={[
                         styles.themeCircle,
-                        key === 'default'
+                        key === 'default' || key === 'orange'
                           ? { borderColor: colors.separator, borderWidth: StyleSheet.hairlineWidth }
                           : { backgroundColor: theme.primary },
                       ]}
                     >
-                      {key === 'default' && (
+                      {(key === 'default' || key === 'orange') && (
                         <>
-                          <View style={[styles.themeCircleHalf, { backgroundColor: '#FFFFFF' }]} />
+                          <View style={[styles.themeCircleHalf, { backgroundColor: key === 'orange' ? '#FF6A1F' : '#FFFFFF' }]} />
                           <View style={[styles.themeCircleHalf, { backgroundColor: '#000000' }]} />
                         </>
                       )}
@@ -2042,16 +2293,21 @@ const styles = StyleSheet.create({
   },
   rowLabel: {
     fontSize: 17,
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 0,
+    marginRight: 12,
   },
   rowRight: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'flex-end',
+    flexShrink: 1,
     gap: 4,
   },
   rowValue: {
     fontSize: 17,
     marginRight: 4,
+    flexShrink: 1,
   },
   segmentedControl: {
     flexDirection: 'row',

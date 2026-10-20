@@ -21,11 +21,13 @@ import { ThemedText } from '@/components/themed-text';
 import { usePlants } from '@/contexts/PlantContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { getThemeColors } from '@/constants/theme';
+import { useAuth } from '@/contexts/AuthContext';
 import { registerForPushNotifications } from '@/hooks/use-notifications';
 
 const STEPS = [
   'welcome',
   'home',
+  'watering',
   'calendar',
   'household',
   'notifications',
@@ -40,7 +42,8 @@ const DEFAULT_USER_NAME = 'Plant Lover';
 export default function WelcomeModal() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { setUserName, setNotificationsEnabled, colorTheme } = usePlants();
+  const { setUserName, setNotificationsEnabled, colorTheme, setPersonalBackupAuthPending, setPersonalBackupEnabled } = usePlants();
+  const { user, isAuthenticated, signOut, firebaseAvailable } = useAuth();
   const colorScheme = useColorScheme();
   const isDark = colorScheme !== 'light';
   const palette = getThemeColors(colorTheme, isDark);
@@ -128,6 +131,30 @@ export default function WelcomeModal() {
     }
   };
 
+  const handleRestoreFromBackup = async () => {
+    if (!firebaseAvailable) {
+      Alert.alert('Cloud Backup Unavailable', 'Cloud backup requires a build with Firebase configured.');
+      return;
+    }
+
+    setPersonalBackupAuthPending(true);
+    try {
+      if (user && !user.isAnonymous) {
+        await setPersonalBackupEnabled(true);
+        setPersonalBackupAuthPending(false);
+        return;
+      }
+      if (isAuthenticated) {
+        await signOut();
+      }
+      router.push({ pathname: '/auth-modal', params: { purpose: 'backup' } });
+    } catch (error: any) {
+      await setPersonalBackupEnabled(false).catch(() => {});
+      setPersonalBackupAuthPending(false);
+      Alert.alert('Cloud Backup', error?.message || 'Could not start restore. Please try again.');
+    }
+  };
+
   const handleNameFocus = () => {
     const inputNode = nameInputRef.current ? findNodeHandle(nameInputRef.current) : null;
     if (!inputNode || !welcomeScrollRef.current) {
@@ -158,6 +185,16 @@ export default function WelcomeModal() {
             <ThemedText style={[s.body, { fontSize: bodySize, marginTop: 12, color: colors.textSecondary }]}>
               Let us take a quick tour of the app.
             </ThemedText>
+            <TouchableOpacity
+              onPress={() => void handleRestoreFromBackup()}
+              style={s.restoreLink}
+              accessibilityRole="button"
+              accessibilityLabel="Already have an account? Sign in to restore your plants from cloud backup"
+            >
+              <ThemedText style={[s.restoreLinkText, { color: palette.primary }]}>
+                Already backed up? Sign in to restore your plants
+              </ThemedText>
+            </TouchableOpacity>
           </>
         );
       case 'home':
@@ -172,6 +209,21 @@ export default function WelcomeModal() {
             </ThemedText>
             <ThemedText style={[s.body, { fontSize: bodySize, marginTop: 12, color: colors.textSecondary }]}>
               Tap the <ThemedText style={[s.highlight, { color: palette.primary }]}>+</ThemedText> button to add your first plant. You can set a watering schedule and the app will remind you when it is time.
+            </ThemedText>
+          </>
+        );
+      case 'watering':
+        return (
+          <>
+            <View style={[s.iconCircle, { backgroundColor: colors.iconCircleBg }]}>
+              <Ionicons name="water" size={isSmall ? 28 : 34} color={palette.primary} />
+            </View>
+            <ThemedText style={[s.title, { fontSize: titleSize, color: colors.text }]}>Logging Watering</ThemedText>
+            <ThemedText style={[s.body, { fontSize: bodySize, color: colors.textSecondary }]}>
+              Open a plant and tap <ThemedText style={[s.highlight, { color: palette.primary }]}>Water</ThemedText> to log it for today.
+            </ThemedText>
+            <ThemedText style={[s.body, { fontSize: bodySize, marginTop: 12, color: colors.textSecondary }]}>
+              Forgot to log it? <ThemedText style={[s.highlight, { color: palette.primary }]}>Press and hold Water</ThemedText> to pick the day and time you really watered, or tap Other date.
             </ThemedText>
           </>
         );
@@ -496,6 +548,18 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 8,
+  },
+  restoreLink: {
+    minHeight: 44,
+    justifyContent: 'center',
+    marginTop: 12,
+    paddingHorizontal: 8,
+  },
+  restoreLinkText: {
+    fontSize: 15,
+    fontWeight: '600',
+    lineHeight: 20,
+    textAlign: 'center',
   },
   laterBtn: {
     minHeight: 44,

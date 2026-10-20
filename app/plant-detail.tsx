@@ -12,6 +12,7 @@ import {
   findNodeHandle,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ThemedText } from '@/components/themed-text';
@@ -326,32 +327,39 @@ export default function PlantDetailScreen() {
         {/* Plant Name & Location */}
         <View style={styles.headerSection}>
           <ThemedText style={[styles.plantName, { color: theme.text }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{plant.name}</ThemedText>
-          <ThemedText style={[styles.plantLocation, { color: theme.secondaryText }]}>📍 {plant.location}</ThemedText>
+          <ThemedText style={[styles.plantLocation, { color: theme.secondaryText }]}>{plant.location}</ThemedText>
         </View>
 
         {/* Water Now Button */}
-        <TouchableOpacity
-          style={[styles.waterButton, { backgroundColor: wateredToday ? theme.accent : theme.primary }]}
-          onPress={handleWater}
-          onLongPress={handleWaterLongPress}
-          onPressOut={handleWaterPressOut}
-          delayLongPress={450}
-          activeOpacity={0.8}
-        >
-          <ThemedText style={styles.waterButtonText}>
-            {wateredToday ? '✓' : 'Water'}
-          </ThemedText>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.pastWateringButton}
-          onPress={openPastWateringPicker}
-          accessibilityRole="button"
-          accessibilityLabel="Log a past watering"
-        >
-          <ThemedText style={[styles.pastWateringText, { color: theme.primary }]}>
-            📅 Log a past watering
-          </ThemedText>
-        </TouchableOpacity>
+        <View style={styles.waterRow}>
+          <TouchableOpacity
+            style={[styles.waterButton, styles.waterButtonFlex, { backgroundColor: wateredToday ? theme.accent : theme.primary }]}
+            onPress={handleWater}
+            onLongPress={handleWaterLongPress}
+            onPressOut={handleWaterPressOut}
+            delayLongPress={450}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={wateredToday ? 'Watered today. Tap to undo' : 'Water now. Press and hold to choose a different date'}
+          >
+            <ThemedText style={styles.waterButtonText}>
+              {wateredToday ? '✓' : 'Water'}
+            </ThemedText>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.otherDateButton, { borderColor: theme.primary }]}
+            onPress={openPastWateringPicker}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Log watering for a different date"
+          >
+            <Ionicons name="calendar-outline" size={20} color={theme.primary} />
+            <ThemedText style={[styles.otherDateText, { color: theme.primary }]}>Other date</ThemedText>
+          </TouchableOpacity>
+        </View>
+        <ThemedText style={[styles.waterTip, { color: theme.secondaryText }]}>
+          Tip: press and hold Water to pick a different date and time.
+        </ThemedText>
 
         {Platform.OS === 'ios' && (
           <Modal
@@ -548,8 +556,6 @@ export default function PlantDetailScreen() {
             historyLog.slice(0, 20).map((entry, index) => {
               const entryDate = new Date(entry.date);
               const actionLabel = entry.action?.trim() || 'Watered';
-              const normalizedAction = actionLabel.toLowerCase();
-              const isWaterAction = normalizedAction === 'water' || normalizedAction === 'watered';
               return (
                 <TouchableOpacity
                   key={`${entry.date}-${index}`}
@@ -568,14 +574,13 @@ export default function PlantDetailScreen() {
                     <ThemedText style={[styles.historyTime, { color: theme.secondaryText }]}>{formatTime(entryDate)}</ThemedText>
                     {entry.note && <ThemedText style={[styles.historyNote, { color: theme.secondaryText }]}>{entry.note}</ThemedText>}
                   </View>
-                  <ThemedText style={styles.historyIcon}>{isWaterAction ? '💧' : '📝'}</ThemedText>
                   <TouchableOpacity
                     style={styles.historyDeleteButton}
                     onPress={() => confirmDeleteEntry(entry)}
                     accessibilityRole="button"
                     accessibilityLabel={`Delete ${actionLabel} entry from ${formatDate(entryDate)}`}
                   >
-                    <ThemedText style={{ color: '#FF3B30', fontSize: 16 }}>🗑️</ThemedText>
+                    <Ionicons name="trash-outline" size={20} color="#FF3B30" />
                   </TouchableOpacity>
                 </TouchableOpacity>
               );
@@ -591,10 +596,10 @@ export default function PlantDetailScreen() {
         {/* Action Buttons */}
         <View style={styles.actionRow}>
           <TouchableOpacity style={[styles.editButton, { backgroundColor: theme.primaryLight, borderWidth: StyleSheet.hairlineWidth, borderColor: surfaceBorderColor }]} onPress={handleEdit} activeOpacity={0.7}>
-            <ThemedText style={[styles.editButtonText, { color: theme.primary }]}>✏️ Edit</ThemedText>
+            <ThemedText style={[styles.editButtonText, { color: theme.primary }]}>Edit</ThemedText>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.deleteButton, { backgroundColor: destructiveBackground, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,59,48,0.18)' }]} onPress={handleDelete} activeOpacity={0.7}>
-            <ThemedText style={styles.deleteButtonText}>🗑️ Delete</ThemedText>
+            <ThemedText style={styles.deleteButtonText}>Delete</ThemedText>
           </TouchableOpacity>
         </View>
 
@@ -670,11 +675,44 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFF',
     paddingTop: 50,
+    lineHeight: 40,
   },
   plantLocation: {
     fontSize: 16,
     color: 'rgba(255,255,255,0.6)',
     marginTop: 4,
+  },
+  waterRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: 10,
+    marginHorizontal: 20,
+    marginTop: 16,
+  },
+  waterButtonFlex: {
+    flex: 1,
+    marginHorizontal: 0,
+    marginTop: 0,
+  },
+  otherDateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minHeight: 44,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    borderWidth: 1.5,
+  },
+  otherDateText: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  waterTip: {
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 8,
+    marginHorizontal: 20,
   },
   waterButton: {
     marginHorizontal: 20,
@@ -691,21 +729,6 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 18,
     fontWeight: '700',
-  },
-  waterButtonHint: {
-    fontSize: 12,
-    marginTop: 6,
-    textAlign: 'center',
-  },
-  pastWateringButton: {
-    alignSelf: 'center',
-    minHeight: 44,
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-  },
-  pastWateringText: {
-    fontSize: 14,
-    fontWeight: '600',
   },
   historyDeleteButton: {
     minWidth: 44,
@@ -760,6 +783,7 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '700',
     color: '#FFF',
+    lineHeight: 28,
   },
   statLabel: {
     fontSize: 12,

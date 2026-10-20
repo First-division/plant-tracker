@@ -77,7 +77,7 @@ export default function HomeScreen() {
     },
     {
       title: 'Your Plant Cards',
-      description: 'All your plants appear here as cards. Tap any card to see details, water it, or edit its info.',
+      description: 'All your plants appear here as cards. Tap a card to see details. There, tap Water to log it, or press and hold Water to pick a past date and time.',
       icon: '🪴',
       targetRef: plantsGridRef,
     },
@@ -761,6 +761,9 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: "600",
     marginBottom: 5,
+
+    lineHeight: 30,
+
   },
 
   userName: {
@@ -768,6 +771,9 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginTop: 5,
     paddingTop: 10,
+
+    lineHeight: 40,
+
   },
 
   remindersContainer: {
@@ -848,6 +854,9 @@ const styles = StyleSheet.create({
 
   imagePlaceholderText: {
     fontSize: 25,
+
+    lineHeight: 31,
+
   },
 
   plantInfo: {

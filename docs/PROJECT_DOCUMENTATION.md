@@ -32,8 +32,10 @@ The `app/` directory contains file-based routes. The root layout wraps the route
    - Local-only plant data is persisted on device.
    - Household mode stores shared plant records in Firestore.
    - Personal backup mirrors the signed-in user's plants to a separate Firestore collection.
+   - Restore safety: backup sync waits until local plants have loaded and never pushes an empty list. On an empty device with a non-empty cloud copy, the app asks "Restore your plants?" first ("Not now" stops pulling cloud-only plants until the user restores). Users can also restore from Settings → Restore from Backup or from the welcome tour's "Already backed up? Sign in to restore" link.
+   - Firestore rules (set in the Firebase console; no rules file in the repo) must allow owners to read/write `users/{uid}/**`.
 3. Firestore subscriptions update context state when household or backup records change remotely.
-4. Local plant-photo URIs are copied into the app's documents directory. In cloud modes, photos are uploaded to Firebase Storage and the resulting URI/path is included in the record.
+4. Local plant-photo URIs are copied into the app's documents directory. Household mode uploads photos to Firebase Storage. Personal backup instead stores a reduced-size JPEG (about 640 px, base64) in the Firestore document `users/{uid}/plantPhotos/{plantId}`; the plant record carries a `photoVersion` (the local photo file name) so unchanged photos are not re-uploaded, and restore downloads the photo into the app's photo directory. Photo backup needs the `expo-image-manipulator` native module (requires a new native build).
 5. Calendar, home reminders, plant detail, and notifications use shared watering-log and schedule helpers so recorded watering affects the same timeline.
 
 Watering dates are ISO timestamps. Calendar-day comparisons use the device's local date. Waterings for the same plant and local day replace one another; non-watering history actions on that day are retained. Household watering-log mutations run in Firestore transactions to avoid losing a concurrent update.

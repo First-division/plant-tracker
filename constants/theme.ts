@@ -31,7 +31,7 @@ export const Colors = {
 // --- Color Theme Presets ---
 
 /** Stable identifier for a selectable app color palette. */
-export type ColorThemeName = 'default' | 'forest' | 'ocean' | 'sunset' | 'lavender' | 'rose' | 'pink';
+export type ColorThemeName = 'default' | 'forest' | 'ocean' | 'sunset' | 'lavender' | 'rose' | 'pink' | 'orange';
 
 /** Palette values needed to style app screens consistently in light and dark modes. */
 export type ColorTheme = {
@@ -124,6 +124,17 @@ export const COLOR_THEMES: Record<ColorThemeName, ColorTheme> = {
     screenBg: '#1B0F16',
     lightCardBg: '#FFF7FB',
     lightScreenBg: '#FFEFF7',
+  },
+  orange: {
+    name: 'orange',
+    label: 'Orange',
+    primary: '#FF6A1F',
+    primaryLight: 'rgba(255,106,31,0.22)',
+    accent: '#FF8A3D',
+    cardBg: '#2B1608',
+    screenBg: '#0D0602',
+    lightCardBg: '#FFF6EF',
+    lightScreenBg: '#FFDCC6',
   },
 };
 

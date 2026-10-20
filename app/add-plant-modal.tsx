@@ -503,14 +503,14 @@ export default function AddPlantModal() {
               onPress={takePicture}
               disabled={isSubmitting || isProcessingPhoto}
             >
-              <ThemedText style={[styles.photoButtonText, { color: '#FFFFFF' }]}>📷 Take Photo</ThemedText>
+              <ThemedText style={[styles.photoButtonText, { color: '#FFFFFF' }]}>Take Photo</ThemedText>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.photoButton, { backgroundColor: colors.primary }]}
               onPress={pickImage}
               disabled={isSubmitting || isProcessingPhoto}
             >
-              <ThemedText style={[styles.photoButtonText, { color: '#FFFFFF' }]}>🖼️ Pick Image</ThemedText>
+              <ThemedText style={[styles.photoButtonText, { color: '#FFFFFF' }]}>Choose from Camera Roll</ThemedText>
             </TouchableOpacity>
           </View>
           {!!photoUri && (
@@ -605,7 +605,6 @@ export default function AddPlantModal() {
               <ThemedText style={{ color: colors.text, fontSize: 16 }}>
                 {parseDateString(birthday)?.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) ?? 'Choose a date'}
               </ThemedText>
-              <ThemedText style={{ color: colors.secondaryText }}>📅</ThemedText>
             </TouchableOpacity>
           </View>
 
@@ -873,10 +872,16 @@ const styles = StyleSheet.create({
   placeholderText: {
     fontSize: 64,
     marginBottom: 8,
+
+    lineHeight: 80,
+
   },
 
   placeholderLabel: {
     fontSize: 25,
+
+    lineHeight: 31,
+
   },
 
   photoButtonsRow: {
@@ -886,8 +891,9 @@ const styles = StyleSheet.create({
 
   photoButton: {
     flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    minHeight: 48,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
@@ -896,6 +902,7 @@ const styles = StyleSheet.create({
   photoButtonText: {
     fontWeight: '600',
     fontSize: 14,
+    textAlign: 'center',
   },
 
   removePhotoButton: {

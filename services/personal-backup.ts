@@ -1,4 +1,4 @@
-/** Per-user Firestore backup, including plant-photo uploads and deletion tombstones. */
+/** Per-user Firestore backup, including reduced-size plant photos and deletion tombstones. */
 
 import {
   collection,
@@ -9,13 +9,18 @@ import {
   onSnapshot,
   setDoc,
 } from 'firebase/firestore';
+import { Image } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
-import { deleteObject, getDownloadURL, ref as storageRef, uploadString } from 'firebase/storage';
 import { Plant, WateringEntry } from '@/contexts/PlantContext';
-import { getDb, getStorageService } from './firebase';
+import { getPlantPhotoVersion, savePlantPhotoFromBase64 } from './plant-photos';
+import { getDb } from './firebase';
 
 function personalPlantsCol(userId: string) {
   return collection(getDb(), 'users', userId, 'plants');
+}
+
+function plantPhotosCol(userId: string) {
+  return collection(getDb(), 'users', userId, 'plantPhotos');
 }
 
 function deletedPlantsCol(userId: string) {
@@ -47,32 +52,6 @@ function getLegacyPlantTimestamp(plantId: string): string {
   return new Date().toISOString();
 }
 
-function getPhotoExtension(photoUri: string): string {
-  const normalizedUri = photoUri.split('?')[0]?.split('#')[0] ?? photoUri;
-  const extensionMatch = normalizedUri.match(/\.([a-zA-Z0-9]+)$/);
-  return extensionMatch?.[1]?.toLowerCase() || 'jpg';
-}
-
-function getPhotoContentType(photoUri: string): string {
-  switch (getPhotoExtension(photoUri)) {
-    case 'png':
-      return 'image/png';
-    case 'webp':
-      return 'image/webp';
-    case 'gif':
-      return 'image/gif';
-    case 'heic':
-    case 'heif':
-      return 'image/heic';
-    default:
-      return 'image/jpeg';
-  }
-}
-
-function buildPlantPhotoStoragePath(userId: string, plantId: string, photoUri: string): string {
-  return `users/${userId}/plants/${plantId}/photo.${getPhotoExtension(photoUri)}`;
-}
-
 function normalizeFirestoreTimestamp(value: unknown, fallback: string): string {
   if (typeof value === 'string' && value.trim()) {
     return value;
@@ -90,51 +69,86 @@ function normalizeFirestoreTimestamp(value: unknown, fallback: string): string {
   return fallback;
 }
 
-async function deletePlantPhotoFromStorage(storagePath?: string | null): Promise<void> {
-  if (!storagePath) {
-    return;
+const BACKUP_PHOTO_MAX_BASE64_CHARS = 700_000;
+const BACKUP_PHOTO_ATTEMPTS = [
+  { size: 640, quality: 0.6 },
+  { size: 480, quality: 0.5 },
+  { size: 320, quality: 0.4 },
+];
+
+function getImageSize(uri: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    Image.getSize(uri, (width, height) => resolve({ width, height }), reject);
+  });
+}
+
+/** Shrink a local photo to a small JPEG (base64) that fits comfortably in a Firestore document. */
+async function shrinkPhotoForBackup(photoUri: string): Promise<string | null> {
+  let manipulator: typeof import('expo-image-manipulator');
+  try {
+    // Loaded lazily so builds without the native module keep working (photos just are not backed up).
+    manipulator = require('expo-image-manipulator');
+  } catch (error) {
+    console.warn('Image manipulator unavailable; skipping photo backup:', error);
+    return null;
   }
 
-  try {
-    await deleteObject(storageRef(getStorageService(), storagePath));
-  } catch (error) {
-    const errorCode =
-      typeof error === 'object' && error !== null && 'code' in error
-        ? String((error as { code?: unknown }).code)
-        : undefined;
+  const info = await FileSystem.getInfoAsync(photoUri);
+  if (!info.exists) {
+    return null;
+  }
 
-    if (errorCode !== 'storage/object-not-found') {
-      console.warn('Error deleting personal backup photo from storage:', error);
+  const { width, height } = await getImageSize(photoUri);
+  const longestSide = Math.max(width, height);
+
+  for (const attempt of BACKUP_PHOTO_ATTEMPTS) {
+    const context = manipulator.ImageManipulator.manipulate(photoUri);
+    if (longestSide > attempt.size) {
+      context.resize(width >= height ? { width: attempt.size } : { height: attempt.size });
     }
+    const rendered = await context.renderAsync();
+    const saved = await rendered.saveAsync({
+      compress: attempt.quality,
+      format: manipulator.SaveFormat.JPEG,
+      base64: true,
+    });
+
+    if (saved.base64 && saved.base64.length <= BACKUP_PHOTO_MAX_BASE64_CHARS) {
+      return saved.base64;
+    }
+  }
+
+  return null;
+}
+
+async function deleteBackupPhoto(userId: string, plantId: string): Promise<void> {
+  try {
+    await deleteDoc(doc(plantPhotosCol(userId), plantId));
+  } catch (error) {
+    console.warn('Error deleting personal backup photo:', error);
   }
 }
 
-async function uploadPlantPhotoToStorage(
-  photoUri: string,
-  plantId: string,
+/**
+ * Download a plant's backed-up photo and save it on this device. Resolves to the local file
+ * URI, or undefined when the cloud copy is missing or does not match the expected version.
+ */
+export async function restorePlantPhotoFromBackup(
   userId: string,
-  previousStoragePath?: string,
-): Promise<{ photoUri: string; photoStoragePath: string }> {
-  const nextStoragePath = buildPlantPhotoStoragePath(userId, plantId, photoUri);
-  const encodedPhoto = await FileSystem.readAsStringAsync(photoUri, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
-
-  const photoRef = storageRef(getStorageService(), nextStoragePath);
-  await uploadString(photoRef, encodedPhoto, 'base64', {
-    contentType: getPhotoContentType(photoUri),
-  });
-
-  const downloadUrl = await getDownloadURL(photoRef);
-
-  if (previousStoragePath && previousStoragePath !== nextStoragePath) {
-    await deletePlantPhotoFromStorage(previousStoragePath);
+  plantId: string,
+  expectedVersion: string,
+): Promise<string | undefined> {
+  const photoSnapshot = await getDoc(doc(plantPhotosCol(userId), plantId));
+  if (!photoSnapshot.exists()) {
+    return undefined;
   }
 
-  return {
-    photoUri: downloadUrl,
-    photoStoragePath: nextStoragePath,
-  };
+  const data = photoSnapshot.data();
+  if (data.version !== expectedVersion || typeof data.data !== 'string' || !data.data) {
+    return undefined;
+  }
+
+  return savePlantPhotoFromBase64(expectedVersion, data.data);
 }
 
 async function preparePlantForBackup(
@@ -144,49 +158,49 @@ async function preparePlantForBackup(
 ): Promise<Plant> {
   const createdAt = plant.createdAt || existingPlant?.createdAt || getLegacyPlantTimestamp(plant.id);
   const updatedAt = plant.updatedAt || new Date().toISOString();
-  const normalizedPhotoUri = plant.photoUri?.trim() || undefined;
-  const previousStoragePath = existingPlant?.photoStoragePath;
+  const localPhotoUri = plant.photoUri?.trim() || undefined;
+  const cloudVersion = existingPlant?.photoVersion;
+  let photoVersion = cloudVersion;
 
-  if (!normalizedPhotoUri) {
-    await deletePlantPhotoFromStorage(previousStoragePath);
-
-    return {
-      ...plant,
-      photoUri: undefined,
-      photoStoragePath: undefined,
-      createdAt,
-      updatedAt,
-    };
-  }
-
-  if (isRemotePhotoUri(normalizedPhotoUri)) {
-    const shouldKeepStoragePath = existingPlant?.photoUri === normalizedPhotoUri
-      ? previousStoragePath
-      : undefined;
-
-    if (!shouldKeepStoragePath) {
-      await deletePlantPhotoFromStorage(previousStoragePath);
+  if (!localPhotoUri) {
+    // Only an explicit removal (no photo and no known cloud version) deletes the cloud copy;
+    // a plant whose photo has simply not been restored yet keeps its backed-up photo.
+    if (!plant.photoVersion) {
+      if (cloudVersion) {
+        await deleteBackupPhoto(userId, plant.id);
+      }
+      photoVersion = undefined;
+    } else {
+      photoVersion = plant.photoVersion;
     }
+  } else {
+    const localVersion = getPlantPhotoVersion(localPhotoUri);
 
-    return {
-      ...plant,
-      photoUri: normalizedPhotoUri,
-      photoStoragePath: shouldKeepStoragePath,
-      createdAt,
-      updatedAt,
-    };
+    if (localVersion && localVersion !== cloudVersion) {
+      try {
+        const base64 = await shrinkPhotoForBackup(localPhotoUri);
+        if (base64) {
+          // The photo document is written first so a plant never points at a missing photo.
+          await setDoc(doc(plantPhotosCol(userId), plant.id), {
+            version: localVersion,
+            data: base64,
+            updatedAt: new Date().toISOString(),
+          });
+          photoVersion = localVersion;
+        } else {
+          console.warn('Plant photo could not be prepared for backup; backing up without it.');
+        }
+      } catch (error) {
+        console.warn('Plant photo upload failed; backing up without it:', error);
+      }
+    }
   }
-
-  const uploadedPhoto = await uploadPlantPhotoToStorage(
-    normalizedPhotoUri,
-    plant.id,
-    userId,
-    previousStoragePath,
-  );
 
   return {
     ...plant,
-    ...uploadedPhoto,
+    photoUri: undefined,
+    photoStoragePath: undefined,
+    photoVersion,
     createdAt,
     updatedAt,
   };
@@ -196,8 +210,9 @@ function plantToFirestore(plant: Plant): Record<string, any> {
   return {
     name: plant.name,
     percent: plant.percent,
-    photoUri: plant.photoUri || null,
-    photoStoragePath: plant.photoStoragePath || null,
+    photoUri: null,
+    photoStoragePath: null,
+    photoVersion: plant.photoVersion || null,
     location: plant.location,
     checkInterval: plant.checkInterval,
     birthday: plant.birthday,
@@ -219,8 +234,9 @@ function firestoreToPlant(data: Record<string, any>, plantId: string): Omit<Plan
   return {
     name: data.name || '',
     percent: data.percent ?? 0,
-    photoUri: data.photoUri || undefined,
-    photoStoragePath: data.photoStoragePath || undefined,
+    photoUri: undefined,
+    photoStoragePath: undefined,
+    photoVersion: typeof data.photoVersion === 'string' && data.photoVersion ? data.photoVersion : undefined,
     location: data.location || '',
     checkInterval: data.checkInterval || '1 week',
     birthday: data.birthday || '',
@@ -335,8 +351,8 @@ export async function deletePlantFromPersonalBackup(plantId: string, userId: str
   const existing = await getDoc(docRef);
   const deletedAt = new Date().toISOString();
 
-  if (existing.exists()) {
-    await deletePlantPhotoFromStorage(existing.data().photoStoragePath);
+  if (existing.exists() && existing.data().photoVersion) {
+    await deleteBackupPhoto(userId, plantId);
   }
 
   await setDoc(doc(deletedPlantsCol(userId), plantId), {

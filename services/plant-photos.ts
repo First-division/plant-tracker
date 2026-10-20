@@ -199,3 +199,35 @@ export async function clearStoredPlantPhotos(): Promise<void> {
     console.warn('Error clearing stored plant photos:', error);
   }
 }
+
+/**
+ * Stable identity of a photo file (its file name without extension). Backup stores this as
+ * the photo version, so a restored file keeps the same version and is never re-uploaded.
+ */
+export function getPlantPhotoVersion(photoUri?: string): string | undefined {
+  const normalizedUri = photoUri?.trim();
+  if (!normalizedUri || isRemotePhotoUri(normalizedUri)) {
+    return undefined;
+  }
+
+  const lastSegment = normalizedUri.split('?')[0]?.split('#')[0]?.split('/').pop() ?? '';
+  const version = lastSegment.replace(/\.[a-zA-Z0-9]+$/, '').replace(/[^a-zA-Z0-9._-]/g, '');
+  return version || undefined;
+}
+
+/** Write a base64 JPEG from the cloud backup into the managed photo directory. */
+export async function savePlantPhotoFromBase64(version: string, base64: string): Promise<string> {
+  if (!PLANT_PHOTOS_DIR) {
+    throw new Error('Photo storage is not available on this device.');
+  }
+
+  const safeVersion = version.replace(/[^a-zA-Z0-9._-]/g, '');
+  if (!safeVersion) {
+    throw new Error('Invalid photo version.');
+  }
+
+  await ensurePlantPhotoDirectory();
+  const targetUri = `${PLANT_PHOTOS_DIR}${safeVersion}.jpg`;
+  await FileSystem.writeAsStringAsync(targetUri, base64, { encoding: FileSystem.EncodingType.Base64 });
+  return targetUri;
+}

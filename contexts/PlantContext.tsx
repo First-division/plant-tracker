@@ -4,16 +4,16 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode } from 'react';
-import { Appearance } from 'react-native';
+import { Alert, Appearance } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { isFirebaseAvailable } from '@/services/firebase';
 import { HouseholdMember, createHousehold, joinHousehold, leaveHousehold, getHouseholdMembers, updateMemberColor, subscribeToHouseholdMembers } from '@/services/household';
 import { uploadLocalPlants, subscribeToPlants, syncPlantToFirestore, deletePlantFromFirestore, addWateringEntry, appendPlantHistoryEntry, removeWateringEntry, clearWateringLog, snapshotPlantsFromFirestore, backfillPlantOwnership } from '@/services/plant-sync';
 import { HouseholdNotification, subscribeToNotifications, markNotificationRead, sendWaterReminder } from '@/services/household-notifications';
-import { DeletedPlantTombstone, deletePlantFromPersonalBackup, markPersonalBackupDisabled, PersonalBackupSnapshot, snapshotPersonalBackup, subscribeToPersonalBackup, syncPlantToPersonalBackup } from '@/services/personal-backup';
+import { DeletedPlantTombstone, deletePlantFromPersonalBackup, markPersonalBackupDisabled, PersonalBackupSnapshot, restorePlantPhotoFromBackup, snapshotPersonalBackup, subscribeToPersonalBackup, syncPlantToPersonalBackup } from '@/services/personal-backup';
 import { ColorThemeName } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
-import { clearStoredPlantPhotos, deleteStoredPlantPhoto, reconcilePlantPhotoUris } from '@/services/plant-photos';
+import { clearStoredPlantPhotos, deleteStoredPlantPhoto, getPlantPhotoVersion, reconcilePlantPhotoUris } from '@/services/plant-photos';
 import { removeWateringEntriesForDay, upsertWateringEntryForDay } from '@/services/watering-log';
 
 /** Timestamped watering or other care-history event stored on a plant. */
@@ -35,6 +35,8 @@ export type Plant = {
   percent: number;
   photoUri?: string;
   photoStoragePath?: string;
+  /** Identity of the photo held in the cloud backup; set once a photo has been backed up. */
+  photoVersion?: string;
   location: string;
   checkInterval: string;
   birthday: string;
@@ -101,6 +103,7 @@ type PlantsContextType = {
   setPersonalBackupEnabled: (value: boolean) => Promise<void>;
   setPersonalBackupAuthPending: (value: boolean) => void;
   syncPersonalBackupNow: () => Promise<void>;
+  restoreFromPersonalBackup: () => Promise<{ restored: number; total: number }>;
   householdEnabled: boolean;
   householdAuthPending: boolean;
   setHouseholdAuthPending: (value: boolean) => void;
@@ -188,6 +191,8 @@ function applyPlantInput(existing: Plant, plantData: PlantInput): Plant {
       photoChanged && (!nextPhotoUri || !isRemotePhotoUri(nextPhotoUri))
         ? undefined
         : existing.photoStoragePath,
+    // Keep the backed-up photo identity unless the user explicitly removed the photo.
+    photoVersion: photoChanged && !nextPhotoUri ? undefined : existing.photoVersion,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -204,6 +209,23 @@ function getDeletedPlantTombstoneValue(tombstone: DeletedPlantTombstone): number
 
 function sortPlantsByNewestId(plants: Plant[]): Plant[] {
   return [...plants].sort((a, b) => Number.parseInt(b.id, 10) - Number.parseInt(a.id, 10));
+}
+
+/**
+ * When the cloud copy wins a merge, its record has no device-local photo path. Keep this
+ * device's photo unless the cloud copy is newer and no longer has a photo (removed elsewhere).
+ */
+function keepLocalPhotoWhenRemoteWins(localPlant: Plant | undefined, remotePlant: Plant): Plant {
+  if (!localPlant?.photoUri) {
+    return remotePlant;
+  }
+
+  const remoteIsSameAge = getPlantUpdatedAtValue(remotePlant) === getPlantUpdatedAtValue(localPlant);
+  if (remotePlant.photoVersion || remoteIsSameAge) {
+    return { ...remotePlant, photoUri: localPlant.photoUri };
+  }
+
+  return remotePlant;
 }
 
 function mergePlantsForPersonalBackup(
@@ -248,7 +270,7 @@ function mergePlantsForPersonalBackup(
         mergedPlants.push(survivingLocalPlant);
         plantsToUpload.push(survivingLocalPlant);
       } else {
-        mergedPlants.push(survivingRemotePlant);
+        mergedPlants.push(keepLocalPhotoWhenRemoteWins(survivingLocalPlant, survivingRemotePlant));
       }
       continue;
     }
@@ -297,6 +319,10 @@ export function PlantsProvider({ children }: { children: ReactNode }) {
   const householdIdRef = useRef<string | null>(null);
   const personalBackupUnsubscribeRef = useRef<(() => void) | null>(null);
   const personalBackupSyncInProgressRef = useRef(false);
+  const [plantsLoaded, setPlantsLoaded] = useState(false);
+  const [backupRestoreOffer, setBackupRestoreOffer] = useState<{ count: number } | null>(null);
+  const skipBackupRestoreRef = useRef(false);
+  const photoUploadAttemptsRef = useRef<Set<string>>(new Set());
   const firestoreUnsubscribeRef = useRef<(() => void) | null>(null);
   const notifUnsubscribeRef = useRef<(() => void) | null>(null);
   const membersUnsubscribeRef = useRef<(() => void) | null>(null);
@@ -383,6 +409,9 @@ export function PlantsProvider({ children }: { children: ReactNode }) {
       }
     } catch (error) {
       console.error('Error loading plants:', error);
+    } finally {
+      // Backup sync must never run against a not-yet-loaded (empty) local list.
+      setPlantsLoaded(true);
     }
   }, [hydratePlants]);
 
@@ -431,7 +460,10 @@ export function PlantsProvider({ children }: { children: ReactNode }) {
       if (storedHouseholdName) setHouseholdNameState(storedHouseholdName);
 
       const storedColorTheme = await SecureStore.getItemAsync(COLOR_THEME_KEY);
-      if (storedColorTheme) setColorThemeState(storedColorTheme as ColorThemeName);
+      if (storedColorTheme) {
+        // 'beaver' was renamed to 'orange'.
+        setColorThemeState((storedColorTheme === 'beaver' ? 'orange' : storedColorTheme) as ColorThemeName);
+      }
 
       const storedMemberColor = await SecureStore.getItemAsync(MEMBER_COLOR_KEY);
       if (storedMemberColor) setHouseholdMemberColorState(storedMemberColor);
@@ -484,37 +516,174 @@ export function PlantsProvider({ children }: { children: ReactNode }) {
 
   const personalBackupUserId = authUser?.uid && !authUser.isAnonymous ? authUser.uid : null;
 
+  /** Merge a cloud snapshot into local plants and upload newer local changes. */
+  const applyPersonalBackupMerge = useCallback(
+    async (backupSnapshot: PersonalBackupSnapshot, userId: string, includeRemoteOnlyPlants: boolean) => {
+      const localPlants = plantsRef.current;
+      const localIds = new Set(localPlants.map((plant) => plant.id));
+      const remotePlants = includeRemoteOnlyPlants
+        ? backupSnapshot.plants
+        : backupSnapshot.plants.filter((plant) => localIds.has(plant.id));
+      const { mergedPlants, plantsToUpload } = mergePlantsForPersonalBackup(
+        localPlants,
+        remotePlants,
+        backupSnapshot.deletedPlantTombstones,
+      );
+      await hydratePlants(mergedPlants, { persistLocally: true });
+
+      const uploadIds = new Set(plantsToUpload.map((plant) => plant.id));
+      const remoteById = new Map(remotePlants.map((plant) => [plant.id, plant]));
+
+      // Cloud plants that have no photo yet but whose photo exists on this device need it uploaded.
+      for (const plant of plantsRef.current) {
+        const remotePlant = remoteById.get(plant.id);
+        const localVersion = getPlantPhotoVersion(plant.photoUri);
+        const attemptKey = `${plant.id}:${localVersion}`;
+        if (
+          remotePlant &&
+          !uploadIds.has(plant.id) &&
+          localVersion &&
+          !remotePlant.photoVersion &&
+          !photoUploadAttemptsRef.current.has(attemptKey)
+        ) {
+          photoUploadAttemptsRef.current.add(attemptKey);
+          uploadIds.add(plant.id);
+          plantsToUpload.push(plant);
+        }
+      }
+
+      if (plantsToUpload.length > 0) {
+        await Promise.all(
+          plantsToUpload.map((plant) =>
+            syncPlantToPersonalBackup(plant, userId).catch((error) => {
+              console.error('Error syncing personal backup plant:', error);
+            }),
+          ),
+        );
+      }
+
+      // Download photos for plants whose newest data (and photo) lives in the cloud copy.
+      const photosToRestore = plantsRef.current.filter((plant) => {
+        const remotePlant = remoteById.get(plant.id);
+        return (
+          !!remotePlant?.photoVersion &&
+          !uploadIds.has(plant.id) &&
+          getPlantUpdatedAtValue(remotePlant) >= getPlantUpdatedAtValue(plant) &&
+          getPlantPhotoVersion(plant.photoUri) !== remotePlant.photoVersion
+        );
+      });
+      const restoredPhotoUris = new Map<string, string>();
+      const restoreBatchSize = 3;
+      for (let i = 0; i < photosToRestore.length; i += restoreBatchSize) {
+        await Promise.all(
+          photosToRestore.slice(i, i + restoreBatchSize).map(async (plant) => {
+            const version = remoteById.get(plant.id)!.photoVersion!;
+            try {
+              const uri = await restorePlantPhotoFromBackup(userId, plant.id, version);
+              if (uri) {
+                restoredPhotoUris.set(plant.id, uri);
+              }
+            } catch (error) {
+              console.warn('Error restoring backup photo:', error);
+            }
+          }),
+        );
+      }
+
+      if (restoredPhotoUris.size > 0) {
+        // Apply to the latest list so edits made while photos downloaded are not overwritten.
+        const withPhotos = plantsRef.current.map((plant) => {
+          const uri = restoredPhotoUris.get(plant.id);
+          return uri ? { ...plant, photoUri: uri, photoVersion: getPlantPhotoVersion(uri) } : plant;
+        });
+        await persistPlantsLocally(withPhotos);
+      }
+
+      return {
+        restored: mergedPlants.filter((plant) => !localIds.has(plant.id)).length,
+        total: mergedPlants.length,
+      };
+    },
+    [hydratePlants, persistPlantsLocally],
+  );
+
   const reconcilePersonalBackupSnapshot = useCallback(
     async (backupSnapshot: PersonalBackupSnapshot, userId: string) => {
-      if (personalBackupSyncInProgressRef.current) {
+      if (personalBackupSyncInProgressRef.current || !plantsLoaded) {
         return;
       }
 
       personalBackupSyncInProgressRef.current = true;
 
       try {
-        const { mergedPlants, plantsToUpload } = mergePlantsForPersonalBackup(
-          plantsRef.current,
-          backupSnapshot.plants,
-          backupSnapshot.deletedPlantTombstones,
-        );
-        await hydratePlants(mergedPlants, { persistLocally: true });
+        const remoteOnlyCount = backupSnapshot.plants.filter(
+          (plant) => !plantsRef.current.some((local) => local.id === plant.id),
+        ).length;
 
-        if (plantsToUpload.length > 0) {
-          await Promise.all(
-            plantsToUpload.map((plant) =>
-              syncPlantToPersonalBackup(plant, userId).catch((error) => {
-                console.error('Error syncing personal backup plant:', error);
-              }),
-            ),
-          );
+        if (plantsRef.current.length === 0 && remoteOnlyCount > 0) {
+          // Empty device + existing cloud copy: ask before restoring and never push an empty list.
+          if (!skipBackupRestoreRef.current) {
+            setBackupRestoreOffer((prev) => prev ?? { count: remoteOnlyCount });
+          }
+          return;
         }
+
+        // After "Not now", only keep local plants in sync; don't silently pull cloud-only plants.
+        await applyPersonalBackupMerge(backupSnapshot, userId, !skipBackupRestoreRef.current);
       } finally {
         personalBackupSyncInProgressRef.current = false;
       }
     },
-    [hydratePlants],
+    [applyPersonalBackupMerge, plantsLoaded],
   );
+
+  const restoreFromPersonalBackup = useCallback(async () => {
+    if (householdEnabled || !personalBackupUserId) {
+      throw new Error('Sign in with your backup account to restore plants.');
+    }
+
+    const backupSnapshot = await snapshotPersonalBackup(personalBackupUserId);
+    skipBackupRestoreRef.current = false;
+    setBackupRestoreOffer(null);
+    return applyPersonalBackupMerge(backupSnapshot, personalBackupUserId, true);
+  }, [applyPersonalBackupMerge, householdEnabled, personalBackupUserId]);
+
+  useEffect(() => {
+    if (!backupRestoreOffer) return;
+
+    // Delay so the alert isn't dropped while a sign-in modal is still dismissing.
+    const timer = setTimeout(() => {
+      Alert.alert(
+        'Restore your plants?',
+        `We found ${backupRestoreOffer.count} ${backupRestoreOffer.count === 1 ? 'plant' : 'plants'} in your cloud backup. Restore ${backupRestoreOffer.count === 1 ? 'it' : 'them'} to this device?`,
+        [
+          {
+            text: 'Not now',
+            style: 'cancel',
+            onPress: () => {
+              skipBackupRestoreRef.current = true;
+              setBackupRestoreOffer(null);
+            },
+          },
+          {
+            text: 'Restore',
+            onPress: () => {
+              restoreFromPersonalBackup()
+                .then(({ restored }) => {
+                  Alert.alert('Backup restored', `Restored ${restored} ${restored === 1 ? 'plant' : 'plants'} from your cloud backup.`);
+                })
+                .catch((error) => {
+                  Alert.alert('Restore failed', error?.message || 'Could not restore your plants right now. You can try again from Settings.');
+                });
+            },
+          },
+        ],
+        { cancelable: false },
+      );
+    }, 700);
+
+    return () => clearTimeout(timer);
+  }, [backupRestoreOffer, restoreFromPersonalBackup]);
 
   const syncPersonalBackupNow = useCallback(async () => {
     if (!personalBackupEnabled || householdEnabled || !personalBackupUserId) {
@@ -837,6 +1006,8 @@ export function PlantsProvider({ children }: { children: ReactNode }) {
       setColorThemeState('default');
       setPersonalBackupEnabledState(false);
       setPersonalBackupAuthPendingState(false);
+      setBackupRestoreOffer(null);
+      skipBackupRestoreRef.current = false;
       setHouseholdEnabledState(false);
       setHouseholdIdState(null);
       setHouseholdCodeState(null);
@@ -1069,6 +1240,7 @@ export function PlantsProvider({ children }: { children: ReactNode }) {
     setPersonalBackupEnabled,
     setPersonalBackupAuthPending,
     syncPersonalBackupNow,
+    restoreFromPersonalBackup,
     householdEnabled,
     householdAuthPending,
     setHouseholdAuthPending,
