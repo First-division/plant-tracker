@@ -1,9 +1,9 @@
 {
   "expo": {
-    "name": "plant-tracker",
+    "name": "PlantCare",
     "slug": "plant-tracker",
-    "version": "1.0.9",
-    "orientation": "portrait",
+    "version": "1.0.11",
+    "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "planttracker",
     "userInterfaceStyle": "automatic",
@@ -13,7 +13,14 @@
       "usesAppleSignIn": true,
       "bundleIdentifier": "com.firstdivisioncaptain.plant-tracker",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UISupportedInterfaceOrientations": ["UIInterfaceOrientationPortrait"],
+        "UISupportedInterfaceOrientations~ipad": [
+          "UIInterfaceOrientationPortrait",
+          "UIInterfaceOrientationPortraitUpsideDown",
+          "UIInterfaceOrientationLandscapeLeft",
+          "UIInterfaceOrientationLandscapeRight"
+        ]
       }
     },
     "android": {

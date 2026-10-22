@@ -23,8 +23,8 @@ const TABLET_CONTENT_MAX_WIDTH = 960;
 export default function HomeScreen() {
   const router = useRouter();
   const {
-    plants, isLoading, removePlant, userName, hasCompletedOnboarding,
-    hasCompletedWalkthrough, setWalkthroughCompleted, resetUserData, waterPlant,
+    plants, isLoading, userName, hasCompletedOnboarding,
+    hasCompletedWalkthrough, setWalkthroughCompleted, waterPlant,
     householdEnabled, householdId, householdMembers, householdNotifications,
     sendReminder, dismissNotification, colorTheme, householdMemberColor,
     refreshHouseholdMembers,
@@ -196,7 +196,7 @@ export default function HomeScreen() {
       });
       return () => handle.cancel();
     }
-  }, [isLoading, hasCompletedOnboarding]);
+  }, [isLoading, hasCompletedOnboarding, router]);
 
   useEffect(() => {
     if (isLoading || !hasCompletedOnboarding || showWalkthrough || hasShownWhatsNew.current) {

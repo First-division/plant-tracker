@@ -314,7 +314,15 @@ export default function CalendarScreen() {
         <View style={isTablet ? styles.tabletColumns : undefined}>
         <View style={isTablet ? styles.tabletLeftPane : undefined}>
         <View style={styles.header}>
-          <ThemedText style={styles.monthTitle}>{MONTH_NAMES[currentMonth]} {currentYear}</ThemedText>
+          <ThemedText
+            style={styles.monthTitle}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.75}
+            accessibilityLabel={`${MONTH_NAMES[currentMonth]} ${currentYear}`}
+          >
+            {isTablet ? MONTH_NAMES[currentMonth] : MONTH_NAMES[currentMonth].slice(0, 3)} {currentYear}
+          </ThemedText>
           <View style={styles.headerRight}>
             <TouchableOpacity onPress={goToToday} style={[styles.todayButton, { backgroundColor: theme.cardBg }]} accessibilityRole="button" accessibilityLabel="Go to today">
               <ThemedText style={styles.todayButtonText}>Today</ThemedText>
@@ -646,8 +654,8 @@ const styles = StyleSheet.create({
   scrollContent: { flex: 1 },
   scrollContainer: { paddingTop: 8, paddingHorizontal: 16, paddingBottom: 40, maxWidth: 600, alignSelf: 'center' as const, width: '100%' as const },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 20, paddingBottom: 8 },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  monthTitle: { fontSize: 28, fontWeight: '700', paddingTop: 10, lineHeight: 35 },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0, marginLeft: 8 },
+  monthTitle: { flex: 1, flexShrink: 1, fontSize: 28, fontWeight: '700', paddingTop: 10, lineHeight: 35 },
   todayButton: { paddingHorizontal: 14, minHeight: 44, justifyContent: 'center', borderRadius: 22 },
   todayButtonText: { fontSize: 14, fontWeight: '600' },
   navButton: { width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center' },

@@ -10,10 +10,11 @@ export type WhatsNewContent = {
 
 /** In-product release highlights consumed by the What's New screen. */
 export const WHATS_NEW_CONTENT: WhatsNewContent = {
-  releaseLabel: '1.0.9',
+  releaseLabel: '1.0.11',
   title: 'What\'s New',
-  subtitle: 'Highlights from version 1.0.9.',
+  subtitle: 'Highlights from version 1.0.11.',
   features: [
+    'iPad now supports landscape and all orientations.',
     'Today\'s To-Do on the Calendar tab: check off the plants due for watering today.',
     'Watering reminders now suggest a quick nudge based on where the plant lives.',
     'Layouts designed for iPad, including a plant grid and a two-pane Calendar.',
@@ -24,6 +25,10 @@ export const WHATS_NEW_CONTENT: WhatsNewContent = {
     'Clearer camera, photo and notification permission messages.',
   ],
   bugFixes: [
+    'The Calendar month title is shorter on iPhone so the arrow buttons always stay visible.',
+    'Restoring without a saved name now uses just your first name.',
+    'Restoring from the welcome screen now brings back your name and theme, and no longer shows the intro again.',
+    'Older backups now restore their saved name and settings too.',
     'Reset All Data now signs you out and no longer shows the welcome screen twice.',
     'Tab names are no longer cut off on iPad.',
     'Logging a past watering now uses the Other date button only.',

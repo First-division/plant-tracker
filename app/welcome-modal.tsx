@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   StyleSheet,
   TouchableOpacity,
@@ -42,7 +42,14 @@ const DEFAULT_USER_NAME = 'Plant Lover';
 export default function WelcomeModal() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { setUserName, setNotificationsEnabled, colorTheme, setPersonalBackupAuthPending, setPersonalBackupEnabled } = usePlants();
+  const {
+    setUserName,
+    setNotificationsEnabled,
+    colorTheme,
+    hasCompletedOnboarding,
+    setPersonalBackupAuthPending,
+    setPersonalBackupEnabled,
+  } = usePlants();
   const { user, isAuthenticated, signOut, firebaseAvailable } = useAuth();
   const colorScheme = useColorScheme();
   const isDark = colorScheme !== 'light';
@@ -89,6 +96,12 @@ export default function WelcomeModal() {
       }).start();
     });
   }, [fadeAnim]);
+
+  useEffect(() => {
+    if (hasCompletedOnboarding) {
+      router.dismiss();
+    }
+  }, [hasCompletedOnboarding, router]);
 
   const handleNext = () => {
     if (!isLast) transitionTo(STEPS[stepIndex + 1]);

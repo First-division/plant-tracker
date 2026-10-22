@@ -142,6 +142,7 @@ const COLOR_THEME_KEY = 'color_theme';
 const MEMBER_COLOR_KEY = 'member_color';
 
 const DEVICE_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const DEFAULT_RESTORED_USER_NAME = 'Plant Lover';
 
 function isRemotePhotoUri(photoUri?: string): boolean {
   return !!photoUri && (/^https?:\/\//i.test(photoUri) || photoUri.startsWith('data:'));
@@ -664,8 +665,23 @@ export function PlantsProvider({ children }: { children: ReactNode }) {
       console.warn('Error restoring backed-up settings:', error);
     }
 
+    if (!hasCompletedOnboarding) {
+      const fallbackName =
+        userName?.trim() ||
+        authUser?.displayName?.trim().split(/\s+/)[0] ||
+        DEFAULT_RESTORED_USER_NAME;
+      await setUserName(fallbackName);
+    }
+
     return result;
-  }, [applyPersonalBackupMerge, householdEnabled, personalBackupUserId]);
+  }, [
+    applyPersonalBackupMerge,
+    authUser?.displayName,
+    hasCompletedOnboarding,
+    householdEnabled,
+    personalBackupUserId,
+    userName,
+  ]);
 
   // Back up the name and preferences. Skipped until onboarding is done so a freshly reset
   // device never overwrites the cloud copy with defaults.

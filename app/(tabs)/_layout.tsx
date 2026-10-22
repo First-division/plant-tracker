@@ -32,11 +32,9 @@ export default function TabLayout() {
       labelStyle={{
         default: {
           color: theme.secondaryText,
-          fontWeight: Platform.OS === 'ios' && Platform.isPad ? '600' : '500',
         },
         selected: {
           color: theme.primary,
-          fontWeight: '600',
         },
       }}
     >

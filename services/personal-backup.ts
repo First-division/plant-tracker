@@ -427,8 +427,48 @@ export async function savePersonalBackupSettings(
 
 /** Read the backed-up name and preferences, if any. */
 export async function fetchPersonalBackupSettings(userId: string): Promise<PersonalBackupSettings | null> {
-  const settingsSnapshot = await getDoc(doc(getDb(), 'users', userId, 'private', 'settings'));
-  return settingsSnapshot.exists() ? (settingsSnapshot.data() as PersonalBackupSettings) : null;
+  const settingsRef = doc(getDb(), 'users', userId, 'private', 'settings');
+  const settingsSnapshot = await getDoc(settingsRef);
+  if (settingsSnapshot.exists()) {
+    return settingsSnapshot.data() as PersonalBackupSettings;
+  }
+
+  // Backward-compatibility for users who backed up before settings moved under private/settings.
+  const legacySnapshot = await getDoc(doc(getDb(), 'users', userId));
+  if (!legacySnapshot.exists()) {
+    return null;
+  }
+
+  const legacyData = legacySnapshot.data() as Record<string, unknown>;
+  const legacySettings: PersonalBackupSettings = {};
+
+  if (typeof legacyData.userName === 'string' && legacyData.userName.trim()) {
+    legacySettings.userName = legacyData.userName.trim();
+  }
+  if (typeof legacyData.timezone === 'string' && legacyData.timezone.trim()) {
+    legacySettings.timezone = legacyData.timezone.trim();
+  }
+  if (typeof legacyData.defaultCheckInterval === 'string' && legacyData.defaultCheckInterval.trim()) {
+    legacySettings.defaultCheckInterval = legacyData.defaultCheckInterval.trim();
+  }
+  if (typeof legacyData.colorTheme === 'string' && legacyData.colorTheme.trim()) {
+    legacySettings.colorTheme = legacyData.colorTheme.trim();
+  }
+  if (typeof legacyData.appearance === 'string' && legacyData.appearance.trim()) {
+    legacySettings.appearance = legacyData.appearance.trim();
+  }
+
+  if (Object.keys(legacySettings).length === 0) {
+    return null;
+  }
+
+  try {
+    await setDoc(settingsRef, legacySettings, { merge: true });
+  } catch (error) {
+    console.warn('Unable to migrate legacy personal backup settings:', error);
+  }
+
+  return legacySettings;
 }
 
 /** Record that this user has disabled personal cloud backup. */
